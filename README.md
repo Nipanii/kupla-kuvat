@@ -5,3 +5,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 
 - `kuvat/vastaus-ui-v3-tiivis.jpg` — vastaus/lainaus-UI-luonnos, variantit A (ylhäällä) ja B (alhaalla), 24.9.2026
 - `kuvat/vastaus-ui-v3-rinnakkain.jpg` — sama A | B rinnakkain koko ruudusta
+- `kuvat/clawd-357-robon-nako.jpg` — Clawd huone 357, robon näkymä 05:28
