@@ -1,0 +1,16 @@
+// NARRIASU nullille — liitä selaimen konsoliin (F12 -> Console) kupla.cc-välilehdellä ja paina Enter.
+// Lisää narrinhatun+naamion (ha-11405) nykyiseen asuusi ja tallentaa sen. Muu asu pysyy samana.
+// Palvelin voi poistaa vaatteen jota et omista (vaatetarkistus) — silloin mitään ei tapahdu.
+(() => {
+  const LOOK = 'fa-201407-1324.hr-115-45.ch-230-107574.sh-305-92.cp-9032-1308.lg-280-91.hd-1000002010-3.ca-1807-84.wa-7625-1408.he-1601-1408.ea-1404-1408.ha-11405';
+  const dv = (o, k) => { const d = o && Object.getOwnPropertyDescriptor(o, k); return d && !d.get ? d.value : undefined; };
+  const RE = window.NitroDevTools && window.NitroDevTools.roomEngine; if (!RE) return console.log('ei NitroDevToolsia — päivitä sivu ja kokeile huoneessa');
+  const seen = new Set(); let conn = null;
+  const scan = (o, d) => { if (!o || conn || d > 4 || typeof o !== 'object' || seen.has(o)) return; seen.add(o);
+    if (Object.getOwnPropertyDescriptor(o, '_cryptoState')) { conn = o; return; }
+    for (const k of Object.getOwnPropertyNames(o)) { const de = Object.getOwnPropertyDescriptor(o, k); if (de && !de.get && de.value && typeof de.value === 'object') scan(de.value, d + 1); } };
+  scan(dv(RE, '_roomSessionManager'), 0); if (!conn) return console.log('yhteyttä ei löytynyt');
+  const map = dv(dv(conn, '_messages'), '_messageIdByComposer'); let C = null; for (const [k, v] of map) if (v === 2730) C = k;
+  if (!C) return console.log('USER_FIGURE-composeria ei löytynyt');
+  conn.send(new C('M', LOOK)); console.log('lähetetty: narriasu päällä (jos palvelin hyväksyi)');
+})();
