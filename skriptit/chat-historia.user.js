@@ -3,7 +3,7 @@
 // @namespace    kupla-relab
 // @updateURL    https://nipanii.github.io/kupla-kuvat/skriptit/chat-historia.user.js
 // @downloadURL  https://nipanii.github.io/kupla-kuvat/skriptit/chat-historia.user.js
-// @version      0.2.1
+// @version      0.2.2
 // @description  Vanhan Habbo-clientin (roomchat) chat-historia: tartu huoneen chat-kuplaan ja vedä alas, niin aiemmat kuplat tulevat näkyviin puhujiensa kohdalle. Vedä takaisin ylös tai paina X / Esc, niin live-chat palaa.
 // @match        https://kupla.cc/*
 // @grant        none
@@ -19,7 +19,7 @@
 //   RoomChatItem.as            mouse DOWN kuplassa aloittaa vedon
 //   RoomChatHistoryViewer.as   3 px hystereesi (_Str_14515), sitten chat-alue kasvaa vedon verran
 //   RoomChatHistoryPulldown.as 39 px tartuntapalkki: tausta, kahva 98x21 keskellä, ritilät, X 13x13
-//                              (oikealla 3 px), fade in 250 ms / out 150 ms; historian tausta chat_history_bg
+//                              (oikealla 3 px); SWF:n fade 250/150 ms JÄTETTY POIS Resin pyynnöstä (v0.2.2); historian tausta chat_history_bg
 //   RoomChatWidget.as          kuplan x = puhujan x, keskitetty ja rajattu, osoitin puhujaan (_Str_14645);
 //                              y alhaalta ylös: uusin top = H−19−23, vanhempi = seuraava − 19 jos
 //                              vaakasuunnassa päällekkäin, muuten − 10 (_Str_19662, _Str_9323);
@@ -49,7 +49,7 @@
   'use strict';
 
   const NS = '__kuplaChatHistoria';
-  const VERSION = '0.2.1';
+  const VERSION = '0.2.2';
   if (window[NS] && typeof window[NS].destroy === 'function') {
     try { window[NS].destroy(); } catch (e) { /* vanha versio voi olla rikki */ }
   }
@@ -60,8 +60,8 @@
     GRAB_H: 39,             // SWF PULLDOWN_WINDOW_HEIGHT
     MIN_H: 60,
     BOTTOM_RESERVE: 110,    // SWF: työpöytä − 39 − 40; DarkUI:n alapalkki ~55 px
-    FADE_IN: 250,           // SWF FADE_IN_MS
-    FADE_OUT: 150,          // SWF FADE_OUT_MS
+    // v0.2.2: EI fadeja (Res: "jämpti ei animaatiota kummassakaan parempi"). SWF:ssä oli 250/150 ms
+    // (RoomChatHistoryPulldown FADE_IN_MS/FADE_OUT_MS) vain taustalle ja palkille.
     PITCH_ROW: 19,          // SWF _Str_3729
     PITCH_FREE: 10,         // SWF _Str_18120
     BOTTOM_TOP_OFFSET: 42,  // SWF: uusin y = H − 19 − 23
@@ -97,22 +97,17 @@
   const css = `
 .kch-panel{position:absolute;left:0;top:0;width:100%;height:0;z-index:21;display:none;pointer-events:auto}
 .kch-panel.kch-open{display:block}
-.kch-bg{position:absolute;left:0;top:0;right:0;bottom:${CFG.GRAB_H}px;background:url(${IMG.hist}) repeat;opacity:0;
-  transition:opacity ${CFG.FADE_IN}ms linear;pointer-events:none}
+.kch-bg{position:absolute;left:0;top:0;right:0;bottom:${CFG.GRAB_H}px;background:url(${IMG.hist}) repeat;pointer-events:none}
 .kch-list{position:absolute;left:0;top:0;right:0;bottom:${CFG.GRAB_H}px;overflow-y:auto;overflow-x:hidden;cursor:default;
-  user-select:none;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.35) transparent;visibility:hidden}
-.kch-panel.kch-visible .kch-bg,.kch-panel.kch-visible .kch-grab{opacity:1}
-.kch-panel.kch-visible .kch-list{visibility:visible}
-.kch-panel.kch-closing .kch-bg,.kch-panel.kch-closing .kch-grab{transition:opacity ${CFG.FADE_OUT}ms linear;opacity:0}
-.kch-panel.kch-closing .kch-list{visibility:hidden}
+  user-select:none;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.35) transparent}
+/* v0.2.2: auki = näkyy heti, kiinni = display:none heti; ei opacity-tiloja eikä transitioita */
 .kch-canvas{position:relative;width:100%;min-height:100%}
 .kch-panel .bubble-container.kch-bubble{position:absolute!important;top:auto;transition:none!important;pointer-events:auto;width:fit-content}
 .kch-panel .kch-bubble.kch-measure{visibility:hidden}
 .kch-panel .kch-bubble .pointer.kch-ptr{left:var(--kch-ptr-x)!important;transform:none!important}
 .kch-panel .kch-bubble.kch-noptr .pointer{display:none}
 .kch-empty{position:absolute;left:0;right:0;bottom:16px;color:#fff;opacity:.7;font-size:12px;text-align:center}
-.kch-grab{position:absolute;left:0;right:0;bottom:0;height:${CFG.GRAB_H}px;background:url(${IMG.bg}) repeat-x;opacity:0;
-  transition:opacity ${CFG.FADE_IN}ms linear;cursor:ns-resize;--kch-x-inset:3px}
+.kch-grab{position:absolute;left:0;right:0;bottom:0;height:${CFG.GRAB_H}px;background:url(${IMG.bg}) repeat-x;cursor:ns-resize;--kch-x-inset:3px}
 .kch-stripe{position:absolute;left:0;right:0;top:7px;height:21px;pointer-events:none}
 .kch-gripL,.kch-gripR{position:absolute;top:3px;height:15px;background:url(${IMG.grip}) repeat-x}
 .kch-gripL{left:0;width:calc(50% - 54px)}
@@ -316,7 +311,7 @@ body.kch-active .nitro-chat-widget{visibility:hidden!important}
     open: false, mode: 'idle', startX: 0, startY: 0, startH: 0, startScroll: 0,
     closeLine: CFG.MIN_H, pinned: true, swallowTail: false,
     src: null, lastFp: '', xSources: null, imgVerify: null,
-    opens: 0, closes: 0, lastCloseReason: '', closingTimer: null,
+    opens: 0, closes: 0, lastCloseReason: '',
   };
   let panel = null, list = null, canvas = null;
 
@@ -474,32 +469,23 @@ body.kch-active .nitro-chat-widget{visibility:hidden!important}
 
   const open = (height, closeLine) => {
     ensurePanel();
-    if (S.closingTimer) { clearTimeout(S.closingTimer); timeouts.delete(S.closingTimer); S.closingTimer = null; }
     const wasOpen = S.open;
     S.open = true;
     S.closeLine = Math.max(CFG.MIN_H, closeLine == null ? CFG.MIN_H : closeLine);
-    panel.classList.remove('kch-closing');
     panel.classList.add('kch-open');
     setHeight(height == null ? Math.round(hostHeight() * 0.5) : height);
     if (!wasOpen) { S.pinned = true; sweepLive(); document.body.classList.add('kch-active'); renderAll(); S.opens++; placeClose(); }
     pinBottom();
-    panel.classList.add('kch-visible'); // taustan ja palkin opacity-transitio hoitaa 250 ms fade-inin
   };
 
   const close = reason => {
     if (!S.open || !panel) return;
     S.open = false; S.mode = 'idle'; S.closes++; S.lastCloseReason = reason || '';
-    panel.classList.remove('kch-visible');
-    panel.classList.add('kch-closing');
-    document.body.classList.remove('kch-active'); // live-chat heti takaisin, kuten SWF
-    S.closingTimer = later(() => {
-      S.closingTimer = null;
-      if (S.open || !panel) return;
-      panel.classList.remove('kch-open', 'kch-closing');
-      panel.style.height = '0px';
-      if (canvas) canvas.textContent = '';
-      S.src = null;
-    }, CFG.FADE_OUT + 20);
+    panel.classList.remove('kch-open');       // piiloon heti
+    document.body.classList.remove('kch-active'); // live-chat heti takaisin
+    panel.style.height = '0px';
+    if (canvas) canvas.textContent = '';
+    S.src = null;
   };
 
   // ---------------------------------------------------------------- syöte
