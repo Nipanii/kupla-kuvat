@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Kupla chat-historia (vedä kuplista alas)
 // @namespace    kupla-relab
-// @version      0.1.0
-// @description  Vanhan Habbo-clientin chat-historia: tartu huoneen chat-kuplaan ja vedä alas, niin aiemmat kuplat tulevat näkyviin. Vedä takaisin ylös tai paina X / Esc, niin live-chat palaa.
+// @version      0.2.0
+// @description  Vanhan Habbo-clientin (roomchat) chat-historia: tartu huoneen chat-kuplaan ja vedä alas, niin aiemmat kuplat tulevat näkyviin puhujiensa kohdalle. Vedä takaisin ylös tai paina X / Esc, niin live-chat palaa.
 // @match        https://kupla.cc/*
 // @grant        none
 // @run-at       document-idle
@@ -13,56 +13,75 @@
 // kupla.cc-välilehden konsoliin (F12 → Console) ja Enter. Uudelleen liittäminen poistaa edellisen
 // version kuuntelijat ja DOMin ensin (idempotentti).
 //
-// MALLI (Habbo-Sky @ wired2-ngh):
-//   Vetäminen alas on VANHAN roomchat-widgetin mekanismi, ei freeflowchatin:
-//     src/com/sulake/habbo/ui/widget/roomchat/RoomChatItem.as        — mouse DOWN kuplassa aloittaa
-//     src/com/sulake/habbo/ui/widget/roomchat/RoomChatHistoryViewer.as — 3 px hystereesi (_Str_14515=3),
-//                                                                       sen jälkeen chat-alue kasvaa vedon verran
-//     src/com/sulake/habbo/ui/widget/roomchat/RoomChatHistoryPulldown.as — 39 px tartuntapalkki + X, fade 250/150 ms
-//     src/com/sulake/habbo/ui/widget/roomchat/RoomChatWidget.as       — mouse UP: jos alareuna jäi perus-
-//                                                                       korkeuden yläpuolelle → sulkeutuu, live palaa
-//   freeflowchat/history/visualization/ChatHistoryTray.as on sivulaatikko, joka avataan toggle-kutsulla;
-//   sen ChatHistoryScrollView.as antaa vetovierityksen (topY = alku − dy) ja 40 px/rulla-askel.
-//   Tämä skripti: avaus = vanha pulldown, vieritys avoimessa paneelissa = freeflowin vetovieritys.
+// MALLI 1:1 — Habbo-Sky @ wired2-ngh, VANHA roomchat-widget (src/com/sulake/habbo/ui/widget/roomchat/):
+//   RoomChatItem.as            mouse DOWN kuplassa aloittaa vedon
+//   RoomChatHistoryViewer.as   3 px hystereesi (_Str_14515), sitten chat-alue kasvaa vedon verran
+//   RoomChatHistoryPulldown.as 39 px tartuntapalkki: tausta, kahva 98x21 keskellä, ritilät, X 13x13
+//                              (oikealla 3 px), fade in 250 ms / out 150 ms; historian tausta chat_history_bg
+//   RoomChatWidget.as          kuplan x = puhujan x, keskitetty ja rajattu, osoitin puhujaan (_Str_14645);
+//                              y alhaalta ylös: uusin top = H−19−23, vanhempi = seuraava − 19 jos
+//                              vaakasuunnassa päällekkäin, muuten − 10 (_Str_19662, _Str_9323);
+//                              historia on huonekohtainen, max 150 (chat.history.item.max.count);
+//                              vapautus perusrajan yläpuolella → sulkeutuu (_Str_20437)
+//   Grafiikat: src/images/HabboRoomUICom_chat_grapbar_*.png + chat_history_bg.png, upotettu alle
+//   data-URIna sellaisenaan (ei approksimaatiota).
 //
 // MITEN:
 //   • pointerdown VAIN `.nitro-chat-widget .bubble-container`-elementissä (chat-kerros on muuten
 //     pointer-events:none, joten tyhjä alue ja huone eivät koskaan käynnistä vetoa).
-//   • Alle 3 px liike = tavallinen klikkaus: mitään ei tapahdu, kupla valitsee puhujan kuten ennenkin.
-//   • Yli 3 px ALAS = paneeli avautuu ja sen alareuna seuraa osoitinta. Vedon aikana hiiren liike ja
-//     vapautus pysäytetään window-capture-vaiheessa, joten huone ei saa niitä (ei kävelyä, ei valintaa).
-//   • Vapautus alkuperäisen kuplan korkeuden yläpuolella → sulkeutuu (kuten SWF). Muuten jää auki.
-//   • Auki: vedä listaa ylös/alas tai rullaa; vedä alapalkkia muuttaaksesi kokoa; X tai Esc sulkee.
+//   • ≤3 px liike = tavallinen klikkaus: mitään ei tapahdu, kupla valitsee puhujan kuten ennenkin.
+//   • >3 px ALAS = historia avautuu ja sen alareuna seuraa osoitinta. Vedon aikana hiiren liike ja
+//     vapautus pysäytetään window-capture-vaiheessa, joten huone ei saa niitä.
+//   • Auki: live-kuplakerros piilotetaan (SWF:ssä chat-alue ITSE muuttuu historiaksi), historia
+//     näytetään sen paikalla. Vedä listaa tai rullaa; vedä alapalkkia; X tai Esc sulkee.
 //
 // HISTORIAN LÄHDE: clientin oma välimuisti localStorage `kuplafix.chatHistoryCache.<oma userId>`
-//   (DarkUI src/api/chat-history/ChatHistoryCache.ts; tallennetaan 1 s jokaisen viestin jälkeen,
-//   src/hooks/chat-history/useChatHistory.ts). Jos välimuisti on pois päältä, käytetään skriptin
-//   omaa puskuria kuplista, jotka se on nähnyt latautumisensa jälkeen.
-//   HUOM: viestien HTML renderöidään innerHTML:llä täsmälleen kuten client itse tekee samalle datalle
-//   (dangerouslySetInnerHTML ChatWidgetMessageView.tsx / ChatHistoryView.tsx) — sama luottamustaso.
+//   (DarkUI src/api/chat-history/ChatHistoryCache.ts). Välimuistissa EI ole kuplan x-sijaintia, joten
+//   x tulee järjestyksessä: (1) kuplan mitattu paikka kun skripti näki sen livenä, (2) puhujan
+//   NYKYINEN avatar-sijainti jos hän on yhä huoneessa (roomEngine.getRoomObjectScreenLocation),
+//   (3) keskelle ilman osoitinta. Jos välimuisti on pois päältä, käytetään skriptin omaa puskuria.
+//   HUOM: viestien HTML renderöidään innerHTML:llä täsmälleen kuten client itse tekee samalle datalle.
 //
 // KONSOLI: window.__kuplaChatHistoria.open() · .close() · .state() · .destroy()
 (function () {
   'use strict';
 
   const NS = '__kuplaChatHistoria';
-  const VERSION = '0.1.0';
+  const VERSION = '0.2.0';
   if (window[NS] && typeof window[NS].destroy === 'function') {
     try { window[NS].destroy(); } catch (e) { /* vanha versio voi olla rikki */ }
   }
 
   const CFG = {
-    HYSTERESIS: 3,        // SWF RoomChatHistoryViewer._Str_14515
-    ABORT_DX: 12,         // sivuttaisliike ennen avautumista = ei vetoa
-    GRAB_H: 22,           // tartuntapalkki (SWF 39 px, tässä matalampi)
+    HYSTERESIS: 3,          // SWF RoomChatHistoryViewer._Str_14515
+    ABORT_DX: 12,           // sivuttaisliike ennen avautumista = ei vetoa (oma lisäys)
+    GRAB_H: 39,             // SWF PULLDOWN_WINDOW_HEIGHT
     MIN_H: 60,
-    BOTTOM_RESERVE: 110,  // SWF: työpöytä − 39 − 40; DarkUI:n alapalkki ~55 px
-    FADE_IN: 250,         // SWF RoomChatHistoryPulldown FADE_IN_MS
-    FADE_OUT: 150,        // SWF FADE_OUT_MS
-    CHUNK: 150,           // kerralla renderöitävät rivit
-    RELOAD_DEBOUNCE: 1300,// client tallentaa välimuistin 1000 ms viiveellä
+    BOTTOM_RESERVE: 110,    // SWF: työpöytä − 39 − 40; DarkUI:n alapalkki ~55 px
+    FADE_IN: 250,           // SWF FADE_IN_MS
+    FADE_OUT: 150,          // SWF FADE_OUT_MS
+    PITCH_ROW: 19,          // SWF _Str_3729
+    PITCH_FREE: 10,         // SWF _Str_18120
+    BOTTOM_TOP_OFFSET: 42,  // SWF: uusin y = H − 19 − 23
+    SIDE_MARGIN: 20,        // SWF _Str_12991
+    SCROLLBAR_W: 20,        // SWF RoomChatHistoryViewer _Str_4906
+    MAX_ITEMS: 150,         // SWF chat.history.item.max.count oletus
+    ROOM_ONLY: true,        // SWF: historia on huonekohtainen
+    GUARD_DEPTH: 6,         // oma lisäys: ei piiloteta tekstiä kauempana olevan kuplan alle
+    RELOAD_DEBOUNCE: 1300,  // client tallentaa välimuistin 1000 ms viiveellä
     POLL_MS: 3000,
     DOM_BUFFER: 1000,
+  };
+
+  // SWF-bitmapit (Habbo-Sky src/images/HabboRoomUICom_*.png), tavu tavulta
+  const IMG = {
+    bg: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAnCAYAAAA2ANlVAAAAU0lEQVR42mNgYGA4QiQmXuF/orCKisoWYjDIxLNEYhQrYIKYYtbW1tdhGCaITYwkq0cVjiocVUiCQuQchw8Tr3DixInPicFkFyn4MIMvkXj4KAQASodG/D731+cAAAAASUVORK5CYII=',
+    grip: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAPCAYAAADd/14OAAAAG0lEQVR42mP4//+/MQMQEKJJA9Q1ddSNQ92NAGFuf4FUp40iAAAAAElFTkSuQmCC',
+    handle: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGIAAAAVCAYAAAC9gjt3AAAAqUlEQVR42u3ZwQ2AIAxA0e7ETuzETuyk0ZMxUCi26uGT/COXvoQoiOhrI9fM69xYSiHHrCBbrfXcmHMmx24gYwSGFg+iYTQRONd9msVoHkUM8H0MED7CuEKA8BOMIURKiR7kAsEg/THMEAwwBgMIIGgZgsHFYZg/YRncuwii/fUxQD8E5fZCpjDoeco9Xvvir3d1S2sdAFaELgb5ZnocAiQMYP3JlOLfrHcu25xz3NF3lAAAAABJRU5ErkJggg==',
+    x: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA0AAAANCAYAAABy6+R8AAAAO0lEQVR42mNgQAL///83ZsACcInDJdAV4BInWiGcT6qTCGokaBAhjQQDg2INZDuNdqFHMJ7IThGkhh4Aoh9ywe7N77UAAAAASUVORK5CYII=',
+    xHi: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA0AAAANCAYAAABy6+R8AAAASklEQVR42pWSUQoAMAhCu1P3P5uDjYEDVyb480IQKYIEIEPox/cBR+nw53BdcXkgS85By6qiH3CC7XqTarArTgLtehWXIzh8/HsL+t9irMg4e4YAAAAASUVORK5CYII=',
+    xPr: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA0AAAANCAYAAABy6+R8AAAATElEQVR42mNgQAL///83ZsACcInDJdAV4BInWiGcT6qTgOJr8bsZlwaCnsWlgWgnER2suORJ8JMxWU7CGXowCVzi2CJ0LTHixDsJCgAdBnh5j6Z77gAAAABJRU5ErkJggg==',
+    hist: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAE0lEQVR42mNgYGBYTSQeVUhPhQAd30LNyw3eFQAAAABJRU5ErkJggg==',
   };
 
   const ac = new AbortController();
@@ -74,52 +93,73 @@
   // ---------------------------------------------------------------- tyylit
   const STYLE_ID = 'kch-style';
   const css = `
-.kch-panel{position:absolute;left:0;top:0;width:100%;height:0;z-index:21;display:none;flex-direction:column;
-  background:rgba(16,20,27,.84);opacity:0;transition:opacity ${CFG.FADE_IN}ms ease;pointer-events:auto;
-  box-shadow:0 3px 10px rgba(0,0,0,.55);font-family:inherit}
-.kch-panel.kch-open{display:flex}
-.kch-panel.kch-visible{opacity:1}
-.kch-panel.kch-closing{transition:opacity ${CFG.FADE_OUT}ms ease;opacity:0}
-.kch-list{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden;padding:6px 0 4px;cursor:grab;
-  user-select:none;scrollbar-width:thin;scrollbar-color:#6b7482 transparent}
-.kch-list.kch-dragging{cursor:grabbing}
-.kch-row{display:flex;align-items:flex-start;gap:6px;max-width:660px;margin:0 auto 3px;padding:0 10px}
-.kch-time{flex:0 0 auto;min-width:36px;text-align:right;color:#aeb6c2;font-size:11px;line-height:26px}
-.kch-panel .bubble-container.kch-bubble{position:relative!important;left:auto!important;top:auto!important;
-  transition:none!important;pointer-events:auto;width:fit-content;max-width:600px}
-.kch-panel .kch-bubble .chat-bubble{max-width:600px}
-.kch-sep{max-width:660px;margin:6px auto;padding:0 10px;color:#c9d1dc;font-size:11px;text-align:center;opacity:.8}
-.kch-sep span{background:rgba(255,255,255,.08);border-radius:8px;padding:1px 10px}
-.kch-more{color:#8f98a6;font-size:11px;text-align:center;padding:2px 0 6px}
-.kch-empty{color:#c9d1dc;font-size:12px;text-align:center;padding:16px}
-.kch-grab{flex:0 0 ${CFG.GRAB_H}px;height:${CFG.GRAB_H}px;position:relative;cursor:ns-resize;display:flex;
-  align-items:center;justify-content:center;background:linear-gradient(#3b4351,#262c36);border-top:1px solid #5b6472}
-.kch-grab-in{position:relative;width:100%;max-width:660px;height:100%;display:flex;align-items:center;justify-content:center}
-.kch-grip{width:64px;height:4px;border-top:2px solid #8e97a6;border-bottom:2px solid #8e97a6;pointer-events:none}
-.kch-info{position:absolute;left:10px;top:0;line-height:${CFG.GRAB_H}px;color:#aab3c0;font-size:11px;pointer-events:none}
-.kch-close{position:absolute;right:6px;top:2px;width:18px;height:18px;padding:0;border:0;border-radius:3px;
-  background:#b23a3a;color:#fff;font:bold 13px/18px sans-serif;cursor:pointer}
-.kch-close:hover{background:#d04848}
+.kch-panel{position:absolute;left:0;top:0;width:100%;height:0;z-index:21;display:none;pointer-events:auto}
+.kch-panel.kch-open{display:block}
+.kch-bg{position:absolute;left:0;top:0;right:0;bottom:${CFG.GRAB_H}px;background:url(${IMG.hist}) repeat;opacity:0;
+  transition:opacity ${CFG.FADE_IN}ms linear;pointer-events:none}
+.kch-list{position:absolute;left:0;top:0;right:0;bottom:${CFG.GRAB_H}px;overflow-y:auto;overflow-x:hidden;cursor:default;
+  user-select:none;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.35) transparent;visibility:hidden}
+.kch-panel.kch-visible .kch-bg,.kch-panel.kch-visible .kch-grab{opacity:1}
+.kch-panel.kch-visible .kch-list{visibility:visible}
+.kch-panel.kch-closing .kch-bg,.kch-panel.kch-closing .kch-grab{transition:opacity ${CFG.FADE_OUT}ms linear;opacity:0}
+.kch-panel.kch-closing .kch-list{visibility:hidden}
+.kch-canvas{position:relative;width:100%;min-height:100%}
+.kch-panel .bubble-container.kch-bubble{position:absolute!important;top:auto;transition:none!important;pointer-events:auto;width:fit-content}
+.kch-panel .kch-bubble.kch-measure{visibility:hidden}
+.kch-panel .kch-bubble .pointer.kch-ptr{left:var(--kch-ptr-x)!important;transform:none!important}
+.kch-panel .kch-bubble.kch-noptr .pointer{display:none}
+.kch-empty{position:absolute;left:0;right:0;bottom:16px;color:#fff;opacity:.7;font-size:12px;text-align:center}
+.kch-grab{position:absolute;left:0;right:0;bottom:0;height:${CFG.GRAB_H}px;background:url(${IMG.bg}) repeat-x;opacity:0;
+  transition:opacity ${CFG.FADE_IN}ms linear;cursor:ns-resize;--kch-x-inset:3px}
+.kch-stripe{position:absolute;left:0;right:0;top:7px;height:21px;pointer-events:none}
+.kch-gripL,.kch-gripR{position:absolute;top:3px;height:15px;background:url(${IMG.grip}) repeat-x}
+.kch-gripL{left:0;width:calc(50% - 54px)}
+.kch-gripR{left:calc(50% + 54px);right:calc(var(--kch-x-inset) + 18px)}
+.kch-handle{position:absolute;top:0;left:calc(50% - 49px);width:98px;height:21px;background:url(${IMG.handle}) no-repeat}
+.kch-close{position:absolute;top:11px;right:var(--kch-x-inset);width:13px;height:13px;padding:0;border:0;margin:0;
+  background:url(${IMG.x}) no-repeat;cursor:pointer;pointer-events:auto}
+.kch-close:hover{background-image:url(${IMG.xHi})}
+.kch-close:active{background-image:url(${IMG.xPr})}
+body.kch-active .nitro-chat-widget{visibility:hidden!important}
 .nitro-chat-widget .bubble-container{touch-action:none}
 `;
+  const ensureStyle = () => {
+    if (document.getElementById(STYLE_ID)) return;
+    const st = document.createElement('style');
+    st.id = STYLE_ID; st.textContent = css;
+    (document.head || document.documentElement).appendChild(st);
+  };
+  ensureStyle();
+
+  // ---------------------------------------------------------------- huone ja puhujat
+  const RE = () => (window.NitroDevTools && window.NitroDevTools.roomEngine) || null;
+  const own = (o, k) => { try { const d = o && Object.getOwnPropertyDescriptor(o, k); return d && !d.get ? d.value : (o ? o[k] : undefined); } catch (e) { return undefined; } };
+  const activeRoomId = () => { try { const r = RE(); const id = r && r.activeRoomId; return Number.isInteger(id) && id > 0 ? id : null; } catch (e) { return null; } };
+  const ownUserId = () => { try { const id = own(own(RE(), '_sessionDataManager'), 'userId'); return Number.isInteger(id) && id > 0 ? id : null; } catch (e) { return null; } };
+  // puhujan nykyinen x (host-koordinaateissa), vain jos sama henkilö on yhä samassa huonessa
+  const speakerX = (e, hostLeft) => {
+    try {
+      const r = RE(); const room = activeRoomId();
+      if (!r || !room || e.roomId !== room || !(e.entityId >= 0)) return null;
+      const sess = own(r, '_roomSessionManager').getSession(room);
+      const ud = sess && sess.userDataManager && sess.userDataManager.getUserDataByIndex(e.entityId);
+      if (!ud || ud.name !== e.name) return null;
+      const p = r.getRoomObjectScreenLocation(room, e.entityId, 100, 1);
+      if (!p || !Number.isFinite(p.x)) return null;
+      const c = document.querySelector('.nitro-chat-widget');
+      const cl = c ? c.getBoundingClientRect().left : 0;  // DarkUI: bubble left = location.x − w/2 widgetin sisällä
+      return p.x + cl - hostLeft;
+    } catch (err) { return null; }
+  };
 
   // ---------------------------------------------------------------- lähde
   const KEY_RE = /^kuplafix\.chatHistoryCache\.(\d+|anonymous)$/;
-  const ownUserId = () => {
-    try {
-      const re = window.NitroDevTools && window.NitroDevTools.roomEngine;
-      const sdm = re && re._sessionDataManager;
-      const id = sdm && (sdm.userId || (sdm._userId));
-      return Number.isInteger(id) && id > 0 ? id : null;
-    } catch (e) { return null; }
-  };
   const pickKey = () => {
     let keys = [];
     try { keys = Object.keys(localStorage).filter(k => KEY_RE.test(k)); } catch (e) { return null; }
     if (!keys.length) return null;
     const uid = ownUserId();
     if (uid && keys.includes('kuplafix.chatHistoryCache.' + uid)) return 'kuplafix.chatHistoryCache.' + uid;
-    // muuten: tuorein savedAt (nykyinen käyttäjä tallentaa jatkuvasti)
     let best = null, bestAt = -1;
     for (const k of keys) {
       let at = 0;
@@ -128,6 +168,7 @@
     }
     return best;
   };
+  const plain = s => String(s || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/\s+/g, ' ').trim();
 
   const loadCache = () => {
     const key = pickKey();
@@ -136,7 +177,7 @@
     try { o = JSON.parse(localStorage.getItem(key)); } catch (e) { return null; }
     const avatars = (o && Array.isArray(o.avatars)) ? o.avatars : [];
     const msgs = Array.isArray(o) ? o : ((o && o.messages) || []);
-    const entries = msgs.filter(m => m && typeof m === 'object').map(m => {
+    const all = msgs.filter(m => m && typeof m === 'object').map(m => {
       const style = Number.isFinite(+(m.style ?? m.styleId)) ? +(m.style ?? m.styleId) : 0;
       const chatType = Number.isFinite(+m.chatType) ? +m.chatType : 0;
       return {
@@ -149,41 +190,79 @@
         color: m.color || '',
         image: m.imageUrl || m.avatarUrl || (Number.isInteger(m.avatarRef) ? avatars[m.avatarRef] : '') || '',
         at: Number.isFinite(+m.cachedAt) ? +m.cachedAt : 0,
-        session: m.sessionId || '',
+        roomId: Number.isFinite(+m.roomId) ? +m.roomId : -1,
+        entityId: Number.isFinite(+m.entityId) ? +m.entityId : -1,
       };
     });
-    return { key, savedAt: o && o.savedAt, entries };
+    return { key, entries: all };
   };
 
-  // oma puskuri: kuplat, jotka skripti on nähnyt (vain jos välimuisti puuttuu)
+  // SWF-historia on huonekohtainen: vain nykyisen huoneen viimeisimmän sisääntulon jälkeiset rivit
+  const roomSegment = all => {
+    let from = 0;
+    if (CFG.ROOM_ONLY) {
+      for (let i = all.length - 1; i >= 0; i--) { if (all[i].type === 2) { from = i + 1; break; } }
+    }
+    const room = activeRoomId();
+    let seg = all.slice(from).filter(e => e.type === 1 && (!CFG.ROOM_ONLY || room == null || e.roomId === room || e.roomId < 0));
+    return seg.slice(-CFG.MAX_ITEMS);
+  };
+
+  // live-kuplien mitattu paikka + oma puskuri
+  const seen = [];       // {name, text, cx, t}
   const domBuffer = [];
   const hhmm = () => { const d = new Date(); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
-  const recordBubble = el => {
+  const readBubble = el => {
+    const bubble = el.querySelector('.chat-bubble');
+    if (!bubble) return null;
+    const nameEl = el.querySelector('.username');
+    const msgEl = el.querySelector('.message');
+    return {
+      name: nameEl ? nameEl.textContent.replace(/:\s*$/, '').trim() : '',
+      html: msgEl ? msgEl.innerHTML : '',
+      cls: [...bubble.classList].filter(c => /^(bubble|type)-/.test(c)).join(' '),
+      color: el.querySelector('.user-container-bg') ? el.querySelector('.user-container-bg').style.backgroundColor : '',
+      image: el.querySelector('.user-image') ? el.querySelector('.user-image').style.backgroundImage : '',
+    };
+  };
+  const measureBubble = (el, isNew) => {
     try {
-      const bubble = el.querySelector('.chat-bubble');
-      if (!bubble) return;
-      const nameEl = el.querySelector('.username');
-      const msgEl = el.querySelector('.message');
-      const bg = el.querySelector('.user-container-bg');
-      const img = el.querySelector('.user-image');
-      const cls = [...bubble.classList].filter(c => /^(bubble|type)-/.test(c)).join(' ');
-      domBuffer.push({
-        type: 1,
-        name: nameEl ? nameEl.textContent.replace(/:\s*$/, '') : '',
-        message: msgEl ? msgEl.innerHTML : '',
-        time: hhmm(), style: 0, chatType: 0, bubbleClass: cls || 'bubble-0 type-0',
-        color: bg ? bg.style.backgroundColor : '',
-        image: img ? (img.style.backgroundImage || '') : '',
-        at: Date.now(), session: '', dom: true,
-      });
-      if (domBuffer.length > CFG.DOM_BUFFER) domBuffer.splice(0, domBuffer.length - CFG.DOM_BUFFER);
+      if (!el.isConnected) return;
+      const b = readBubble(el);
+      if (!b) return;
+      const r = el.getBoundingClientRect();
+      const host = hostEl().getBoundingClientRect();
+      const text = plain(b.html);
+      if (!seen.some(s => s.name === b.name && s.text === text && Math.abs(s.cx - (r.left + r.width / 2 - host.left)) < 2)) {
+        seen.push({ name: b.name, text, cx: r.left + r.width / 2 - host.left, t: Date.now() });
+        if (seen.length > CFG.DOM_BUFFER) seen.splice(0, seen.length - CFG.DOM_BUFFER);
+      }
+      if (isNew) {
+        domBuffer.push({ type: 1, name: b.name, message: b.html, time: hhmm(), style: 0, chatType: 0, bubbleClass: b.cls || 'bubble-0 type-0',
+          color: b.color, image: b.image, at: Date.now(), roomId: activeRoomId() ?? -1, entityId: -1, dom: true });
+        if (domBuffer.length > CFG.DOM_BUFFER) domBuffer.splice(0, domBuffer.length - CFG.DOM_BUFFER);
+      }
     } catch (e) { /* kupla voi kadota kesken */ }
+  };
+  const sweepLive = () => { document.querySelectorAll('.nitro-chat-widget .bubble-container').forEach(el => measureBubble(el, false)); };
+  const measuredX = e => {
+    const text = plain(e.message);
+    let best = null, bestDt = Infinity;
+    for (let i = seen.length - 1; i >= 0; i--) {
+      const s = seen[i];
+      if (s.name !== e.name || s.text !== text) continue;
+      // s.t = milloin skripti näki kuplan ensimmäisen kerran (≥ viestin hetki); toistuva sama teksti → lähin aika
+      const dt = e.at ? s.t - e.at : 0;
+      if (e.at && dt < -5000) continue;
+      if (dt < bestDt) { bestDt = dt; best = s; }
+    }
+    return best ? best.cx : null;
   };
 
   const getSource = () => {
     const c = loadCache();
-    if (c && c.entries.length) return { kind: 'cache', key: c.key, entries: c.entries };
-    return { kind: 'dom', key: null, entries: domBuffer.slice() };
+    if (c && c.entries.length) return { kind: 'cache', key: c.key, entries: roomSegment(c.entries) };
+    return { kind: 'dom', key: null, entries: domBuffer.slice(-CFG.MAX_ITEMS) };
   };
   const fp = e => e ? `${e.at}|${e.name}|${e.message}` : '';
 
@@ -191,22 +270,14 @@
   const S = {
     open: false, mode: 'idle', startX: 0, startY: 0, startH: 0, startScroll: 0,
     closeLine: CFG.MIN_H, pinned: true, swallowTail: false,
-    src: null, from: 0, lastFp: '', lastSession: null,
-    opens: 0, closes: 0, lastCloseReason: '',
+    src: null, lastFp: '', xSources: null,
+    opens: 0, closes: 0, lastCloseReason: '', closingTimer: null,
   };
-  let panel = null, list = null, info = null;
+  let panel = null, list = null, canvas = null;
 
   const widgetEl = () => document.querySelector('.nitro-chat-widget');
   const hostEl = () => { const w = widgetEl(); return (w && w.parentElement) || document.body; };
   const hostHeight = () => { const h = hostEl(); return (h && h.clientHeight) || window.innerHeight; };
-
-  const ensureStyle = () => {
-    if (document.getElementById(STYLE_ID)) return;
-    const st = document.createElement('style');
-    st.id = STYLE_ID; st.textContent = css;
-    (document.head || document.documentElement).appendChild(st);
-  };
-  ensureStyle(); // heti: touch-action kupliin ennen ensimmäistä vetoa
 
   const ensurePanel = () => {
     ensureStyle();
@@ -215,110 +286,131 @@
       panel = document.createElement('div');
       panel.className = 'kch-panel';
       panel.id = 'kch-panel';
-      panel.innerHTML = '<div class="kch-list"></div><div class="kch-grab" title="Vedä: muuta kokoa · vedä ylös: sulje"><div class="kch-grab-in"><span class="kch-info"></span><div class="kch-grip"></div><button type="button" class="kch-close" title="Sulje (Esc)">×</button></div></div>';
+      panel.innerHTML = '<div class="kch-bg"></div><div class="kch-list"><div class="kch-canvas"></div></div>' +
+        '<div class="kch-grab"><div class="kch-stripe"><div class="kch-gripL"></div><div class="kch-handle"></div><div class="kch-gripR"></div></div>' +
+        '<button type="button" class="kch-close" aria-label="Sulje"></button></div>';
       list = panel.querySelector('.kch-list');
-      info = panel.querySelector('.kch-info');
+      canvas = panel.querySelector('.kch-canvas');
       panel.querySelector('.kch-close').addEventListener('click', ev => { ev.preventDefault(); ev.stopPropagation(); close('x'); }, { signal: ac.signal });
-      // rulla vierittää listaa; ei päästetä huoneelle (zoom tms.)
       panel.addEventListener('wheel', ev => { ev.stopPropagation(); }, { signal: ac.signal, passive: true });
-      list.addEventListener('scroll', () => {
-        S.pinned = (list.scrollHeight - list.scrollTop - list.clientHeight) < 4;
-        if (list.scrollTop < 40) renderMore();
-      }, { signal: ac.signal, passive: true });
+      list.addEventListener('scroll', () => { S.pinned = (list.scrollHeight - list.scrollTop - list.clientHeight) < 4; }, { signal: ac.signal, passive: true });
     }
-    if (host === document.body) panel.style.position = 'fixed'; else panel.style.position = '';
+    panel.style.position = host === document.body ? 'fixed' : '';
     if (panel.parentElement !== host) host.appendChild(panel);
     return panel;
+  };
+
+  // X oikeaan reunaan kuten SWF, mutta DarkUI:n HUD voi peittää reunan: siirretään vasemmalle
+  // kunnes X on oikeasti päällimmäisenä (oma lisäys; SWF:ssä ei ollut päällä olevaa HUDia).
+  const placeClose = () => {
+    const g = panel.querySelector('.kch-grab'); const x = panel.querySelector('.kch-close');
+    for (let inset = 3; inset < 900; inset += 24) {
+      g.style.setProperty('--kch-x-inset', inset + 'px');
+      const r = x.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      if (hit && hit.closest && hit.closest('.kch-close')) return inset;
+    }
+    g.style.setProperty('--kch-x-inset', '3px');
+    return -1;
   };
 
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const cssUrl = u => { if (!u) return ''; return /^url\(/.test(u) ? u : `url("${String(u).replace(/"/g, '%22')}")`; };
 
-  const rowFor = (e, prev) => {
-    const frag = document.createDocumentFragment();
-    if (prev && e.session && prev.session && e.session !== prev.session) {
-      const d = document.createElement('div'); d.className = 'kch-sep kch-session';
-      d.innerHTML = '<span>uusi sessio</span>'; frag.appendChild(d);
-    }
-    if (e.type === 2) {
-      const d = document.createElement('div'); d.className = 'kch-sep kch-room';
-      d.innerHTML = `<span>${esc(e.time)} · huone: ${esc(e.name)}</span>`; frag.appendChild(d);
-      return frag;
-    }
-    if (e.type === 3) return frag; // pikaviestit eivät kuulu huonechattiin
-    const r = document.createElement('div'); r.className = 'kch-row';
+  const bubbleEl = e => {
+    const el = document.createElement('div');
+    el.className = 'bubble-container visible kch-bubble kch-measure';
     const bg = (e.style === 0 && e.color) ? `<div class="user-container-bg" style="background-color:${esc(e.color)}"></div>` : '';
     const img = e.image ? `<div class="user-image" style="background-image:${esc(cssUrl(e.image))}"></div>` : '';
     // name ja message ovat clientin omaa HTML:ää (sama kuin dangerouslySetInnerHTML clientissa)
-    r.innerHTML = `<span class="kch-time">${esc((e.time || '').replace('.', ':'))}</span>` +
-      `<div class="bubble-container kch-bubble">${bg}<div class="chat-bubble ${esc(e.bubbleClass)}">` +
-      `<div class="user-container">${img}</div><div class="chat-content"><b class="username mr-1">${e.name}: </b>` +
-      `<span class="message">${e.message}</span></div></div></div>`;
-    frag.appendChild(r);
-    return frag;
+    el.innerHTML = `${bg}<div class="chat-bubble ${esc(e.bubbleClass)}" style="max-width:350px"><div class="user-container">${img}</div>` +
+      `<div class="chat-content"><b class="username mr-1">${e.name}: </b><span class="message">${e.message}</span></div><div class="pointer"></div></div>`;
+    if (e.time) el.title = e.time.replace('.', ':');
+    return el;
   };
 
-  const updateInfo = () => {
-    if (!info || !S.src) return;
-    const n = S.src.entries.length;
-    info.textContent = `${n - S.from}/${n} viestiä` + (S.src.kind === 'dom' ? ' (vain tämän latauksen jälkeen nähdyt)' : '');
-  };
-
-  const setMore = () => {
-    let m = list.querySelector('.kch-more');
-    if (S.from > 0) {
-      if (!m) { m = document.createElement('div'); m.className = 'kch-more'; list.insertBefore(m, list.firstChild); }
-      m.textContent = `▲ vieritä ylös: vanhempia (${S.from})`;
-    } else if (m) m.remove();
+  // SWF-asettelu: x puhujan kohdalle, y alhaalta ylös 19/10 px välein
+  const layout = () => {
+    if (!S.open || !canvas || !S.src) return;
+    const E = S.src.entries;
+    const els = [...canvas.querySelectorAll('.kch-bubble')];
+    if (!els.length) return;
+    const W = list.clientWidth || hostEl().clientWidth;
+    const hostLeft = hostEl().getBoundingClientRect().left;
+    const lo = CFG.SIDE_MARGIN, hi = W - CFG.SCROLLBAR_W - CFG.SIDE_MARGIN;
+    const box = els.map((el, i) => {
+      const w = el.offsetWidth, h = el.offsetHeight;
+      const r0 = el.getBoundingClientRect(), cc = el.querySelector('.chat-content');
+      // tekstin OMA alareuna (glyfirivit, ei .chat-contentin paddingia)
+      let textBottom = h - 10;
+      if (cc) { try { const rg = document.createRange(); rg.selectNodeContents(cc); const rs = [...rg.getClientRects()].filter(q => q.height > 0);
+        if (rs.length) textBottom = Math.ceil(Math.max(...rs.map(q => q.bottom)) - r0.top); } catch (err) {} }
+      let sx = measuredX(E[i]); let how = 'measured';
+      if (sx == null) { sx = speakerX(E[i], hostLeft); how = 'speaker-now'; }
+      if (sx == null) { sx = W / 2; how = 'centre'; }
+      let left = Math.round(sx - w / 2);
+      left = Math.max(lo, Math.min(hi - w, left));
+      return { el, w, h, left, sx, how, textBottom };
+    });
+    // y: uusin top = 0, vanhemmat ylöspäin
+    const n = box.length;
+    box[n - 1].top = 0;
+    const hOverlap = (a, b) => a.left < b.left + b.w && b.left < a.left + a.w;
+    // SWF: 19 px riittää, koska SWF-kuplan teksti päättyy y=15 (tausta 24). DarkUI:n teksti on alempana ja
+    // voi olla monirivinen, joten uudempi kupla ei saa peittää vanhemman tekstiä: väli = max(19, tekstin alareuna + 1).
+    const pitchRow = b => Math.max(CFG.PITCH_ROW, b.textBottom + 1);
+    for (let i = n - 2; i >= 0; i--) {
+      const a = box[i], b = box[i + 1];
+      let top = b.top - (hOverlap(a, b) ? pitchRow(a) : CFG.PITCH_FREE);
+      for (let j = i + 2; j < Math.min(n, i + 2 + CFG.GUARD_DEPTH); j++) {
+        if (hOverlap(a, box[j])) top = Math.min(top, box[j].top - pitchRow(a));
+      }
+      a.top = top;
+    }
+    const minTop = box[0].top < 0 ? Math.min(...box.map(b => b.top)) : 0;
+    const last = box[n - 1];
+    const bottomPad = CFG.BOTTOM_TOP_OFFSET - last.h; // SWF: uusimman yläreuna 42 px sisällön alareunasta
+    const contentH = (last.top - minTop) + last.h + Math.max(0, bottomPad) + 8;
+    canvas.style.height = contentH + 'px';
+    const counts = { measured: 0, 'speaker-now': 0, centre: 0 };
+    for (const b of box) {
+      b.el.style.left = b.left + 'px';
+      b.el.style.bottom = (Math.max(0, bottomPad) + (last.top + last.h) - (b.top + b.h)) + 'px';
+      const ptr = b.el.querySelector('.pointer');
+      const inRange = b.how !== 'centre' && b.sx >= lo && b.sx <= hi;
+      b.el.classList.toggle('kch-noptr', !inRange);
+      if (ptr && inRange) {
+        const px = Math.max(6, Math.min(b.w - 15, Math.round(b.sx - b.left - 4.5)));
+        ptr.classList.add('kch-ptr'); b.el.style.setProperty('--kch-ptr-x', px + 'px');
+      }
+      b.el.classList.remove('kch-measure');
+      counts[b.how]++;
+    }
+    S.xSources = counts;
   };
 
   const renderAll = () => {
+    const keepFromBottom = list ? (list.scrollHeight - list.scrollTop) : 0;
+    const wasPinned = S.pinned;
     S.src = getSource();
     const E = S.src.entries;
-    list.textContent = '';
-    S.from = Math.max(0, E.length - CFG.CHUNK);
-    if (!E.length) { list.innerHTML = '<div class="kch-empty">Ei vielä historiaa.</div>'; S.lastFp = ''; updateInfo(); return; }
-    const frag = document.createDocumentFragment();
-    for (let i = S.from; i < E.length; i++) frag.appendChild(rowFor(E[i], E[i - 1]));
-    list.appendChild(frag);
+    canvas.textContent = '';
+    canvas.style.height = '';
     S.lastFp = fp(E[E.length - 1]);
-    setMore(); updateInfo();
-  };
-
-  const renderMore = () => {
-    if (!S.open || !S.src || S.from <= 0) return;
-    const E = S.src.entries;
-    const to = S.from, from = Math.max(0, to - CFG.CHUNK);
-    const before = list.scrollHeight;
+    if (!E.length) { canvas.innerHTML = '<div class="kch-empty">Ei vielä historiaa tässä huoneessa.</div>'; return; }
+    sweepLive();
     const frag = document.createDocumentFragment();
-    for (let i = from; i < to; i++) frag.appendChild(rowFor(E[i], E[i - 1]));
-    const anchor = list.querySelector('.kch-more');
-    list.insertBefore(frag, anchor ? anchor.nextSibling : list.firstChild);
-    S.from = from;
-    setMore();
-    list.scrollTop += list.scrollHeight - before;
-    updateInfo();
+    for (const e of E) frag.appendChild(bubbleEl(e));
+    canvas.appendChild(frag);
+    layout();
+    if (wasPinned) pinBottom(); else list.scrollTop = list.scrollHeight - keepFromBottom;
   };
 
   const refresh = () => {
     if (!S.open || !list) return;
     const next = getSource();
-    const E = next.entries;
-    if (!S.src || next.kind !== S.src.kind || next.key !== S.src.key) { renderAll(); if (S.pinned) pinBottom(); return; }
-    let k = -1;
-    for (let i = E.length - 1; i >= 0; i--) { if (fp(E[i]) === S.lastFp) { k = i; break; } }
-    if (k < 0) { const keep = S.pinned; renderAll(); if (keep) pinBottom(); return; }
-    if (k === E.length - 1) { S.src = next; return; }
-    const shown = S.src.entries.length - S.from;
-    const empty = list.querySelector('.kch-empty'); if (empty) empty.remove();
-    const frag = document.createDocumentFragment();
-    for (let i = k + 1; i < E.length; i++) frag.appendChild(rowFor(E[i], E[i - 1]));
-    list.appendChild(frag);
-    S.src = next;
-    S.from = Math.max(0, k + 1 - shown);
-    S.lastFp = fp(E[E.length - 1]);
-    setMore(); updateInfo();
-    if (S.pinned) pinBottom();
+    if (S.src && next.kind === S.src.kind && next.key === S.src.key && fp(next.entries[next.entries.length - 1]) === S.lastFp) return;
+    renderAll();
   };
   let refreshTimer = null;
   const scheduleRefresh = () => {
@@ -340,10 +432,10 @@
     S.closeLine = Math.max(CFG.MIN_H, closeLine == null ? CFG.MIN_H : closeLine);
     panel.classList.remove('kch-closing');
     panel.classList.add('kch-open');
-    if (!wasOpen) { renderAll(); S.pinned = true; S.opens++; }
     setHeight(height == null ? Math.round(hostHeight() * 0.5) : height);
+    if (!wasOpen) { S.pinned = true; sweepLive(); document.body.classList.add('kch-active'); renderAll(); S.opens++; placeClose(); }
     pinBottom();
-    requestAnimationFrame(() => panel && panel.classList.add('kch-visible'));
+    panel.classList.add('kch-visible'); // taustan ja palkin opacity-transitio hoitaa 250 ms fade-inin
   };
 
   const close = reason => {
@@ -351,12 +443,13 @@
     S.open = false; S.mode = 'idle'; S.closes++; S.lastCloseReason = reason || '';
     panel.classList.remove('kch-visible');
     panel.classList.add('kch-closing');
+    document.body.classList.remove('kch-active'); // live-chat heti takaisin, kuten SWF
     S.closingTimer = later(() => {
       S.closingTimer = null;
       if (S.open || !panel) return;
       panel.classList.remove('kch-open', 'kch-closing');
       panel.style.height = '0px';
-      if (list) list.textContent = '';
+      if (canvas) canvas.textContent = '';
       S.src = null;
     }, CFG.FADE_OUT + 20);
   };
@@ -395,13 +488,13 @@
         open(S.startH + dy, S.startY - hostTop);
         swallow(e);
       } else if (dy < -CFG.HYSTERESIS || Math.abs(dx) > CFG.ABORT_DX) {
-        S.mode = 'idle'; // tavallinen klikkaus/liike, ei historiaa
+        S.mode = 'idle';
       }
       return;
     }
     if (S.mode === 'resize') { if (panel) setHeight(S.startH + dy); swallow(e); return; }
     if (S.mode === 'scrollpend') {
-      if (Math.abs(dy) > CFG.HYSTERESIS) { S.mode = 'scroll'; list.classList.add('kch-dragging'); }
+      if (Math.abs(dy) > CFG.HYSTERESIS) S.mode = 'scroll';
       else return;
     }
     if (S.mode === 'scroll') { list.scrollTop = S.startScroll - dy; swallow(e); }
@@ -413,14 +506,12 @@
     if (mode === 'idle') return;
     S.mode = 'idle';
     if (mode === 'pending' || mode === 'scrollpend') return; // klikkaus kulkee normaalisti
-    if (list) list.classList.remove('kch-dragging');
     if (mode === 'resize' && panel) {
       const hostTop = hostEl().getBoundingClientRect().top;
       const barMid = panelBottom() - hostTop - CFG.GRAB_H / 2;
       if (barMid < S.closeLine) close('drag-up');
     }
     swallow(e);
-    // sama fyysinen vapautus tuottaa vielä mouseup + click: niellään ne, jotta kupla/huone ei reagoi
     S.swallowTail = true;
     later(() => { S.swallowTail = false; }, 0);
   };
@@ -436,7 +527,8 @@
   on(window, 'mouseup', e => { if (S.swallowTail || S.mode === 'resize' || S.mode === 'scroll') { if (S.mode !== 'idle') onUp(e); else swallow(e); } }, true);
   on(window, 'click', onClickCapture, true);
   on(window, 'keydown', onKey, false);
-  on(window, 'blur', () => { if (S.mode !== 'idle') { S.mode = 'idle'; if (list) list.classList.remove('kch-dragging'); } }, false);
+  on(window, 'blur', () => { if (S.mode !== 'idle') S.mode = 'idle'; }, false);
+  on(window, 'resize', () => { if (S.open) layout(); }, false);
 
   // ---------------------------------------------------------------- kuplien seuranta
   let observed = null, mo = null;
@@ -449,13 +541,18 @@
     mo = new MutationObserver(recs => {
       let added = false;
       for (const r of recs) for (const n of r.addedNodes) {
-        if (n instanceof Element && n.classList.contains('bubble-container')) { recordBubble(n); added = true; }
+        if (n instanceof Element && n.classList.contains('bubble-container')) {
+          // paikka asetetaan mountin jälkeen: mitataan hetken päästä
+          later(() => measureBubble(n, true), 120);
+          added = true;
+        }
       }
       if (added) scheduleRefresh();
     });
     mo.observe(w, { childList: true });
   };
   attachObserver();
+  sweepLive();
   intervals.push(setInterval(attachObserver, 2000));
   intervals.push(setInterval(() => { if (S.open) refresh(); }, CFG.POLL_MS));
 
@@ -465,10 +562,11 @@
     intervals.forEach(clearInterval); intervals.length = 0;
     timeouts.forEach(clearTimeout); timeouts.clear();
     if (mo) mo.disconnect(); mo = null; observed = null;
-    if (panel) panel.remove(); panel = null; list = null; info = null;
+    if (panel) panel.remove(); panel = null; list = null; canvas = null;
     const st = document.getElementById(STYLE_ID); if (st) st.remove();
+    document.body.classList.remove('kch-active');
     S.open = false; S.mode = 'idle';
-    if (window[NS] && window[NS].version === VERSION && window[NS]._S === S) delete window[NS];
+    if (window[NS] && window[NS]._S === S) delete window[NS];
   };
 
   window[NS] = {
@@ -480,9 +578,10 @@
     state: () => ({
       version: VERSION, open: S.open, mode: S.mode, opens: S.opens, closes: S.closes,
       lastCloseReason: S.lastCloseReason, source: S.src ? S.src.kind : null, key: S.src ? S.src.key : null,
-      total: S.src ? S.src.entries.length : null, rendered: list ? list.querySelectorAll('.kch-row').length : 0,
+      total: S.src ? S.src.entries.length : null, rendered: canvas ? canvas.querySelectorAll('.kch-bubble').length : 0,
       height: panel ? Math.round(panel.getBoundingClientRect().height) : 0, pinned: S.pinned,
-      closeLine: S.closeLine, domBuffer: domBuffer.length, panelInDom: !!(panel && panel.isConnected),
+      closeLine: S.closeLine, xSources: S.xSources, seen: seen.length, domBuffer: domBuffer.length,
+      panelInDom: !!(panel && panel.isConnected), liveHidden: document.body.classList.contains('kch-active'),
     }),
   };
 })();
