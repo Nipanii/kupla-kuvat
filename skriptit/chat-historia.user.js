@@ -3,7 +3,7 @@
 // @namespace    kupla-relab
 // @updateURL    https://nipanii.github.io/kupla-kuvat/skriptit/chat-historia.user.js
 // @downloadURL  https://nipanii.github.io/kupla-kuvat/skriptit/chat-historia.user.js
-// @version      0.2.6
+// @version      0.2.7
 // @description  Vanhan Habbo-clientin (roomchat) chat-historia: tartu huoneen chat-kuplaan ja vedä alas, niin aiemmat kuplat tulevat näkyviin puhujiensa kohdalle. Vedä takaisin ylös tai paina X / Esc, niin live-chat palaa.
 // @match        https://kupla.cc/*
 // @grant        none
@@ -49,7 +49,7 @@
   'use strict';
 
   const NS = '__kuplaChatHistoria';
-  const VERSION = '0.2.6';
+  const VERSION = '0.2.7';
   if (window[NS] && typeof window[NS].destroy === 'function') {
     try { window[NS].destroy(); } catch (e) { /* vanha versio voi olla rikki */ }
   }
@@ -62,8 +62,8 @@
     BOTTOM_RESERVE: 110,    // SWF: työpöytä − 39 − 40; DarkUI:n alapalkki ~55 px
     // v0.2.2: EI fadeja (Res: "jämpti ei animaatiota kummassakaan parempi"). SWF:ssä oli 250/150 ms
     // (RoomChatHistoryPulldown FADE_IN_MS/FADE_OUT_MS) vain taustalle ja palkille.
-    PITCH_ROW: 19,          // SWF _Str_3729
-    PITCH_FREE: 10,         // SWF _Str_18120
+    PITCH_ROW: 19,          // SWF _Str_3729 (v0.2.7: ei enää käytössä, pinonta seuraa livea)
+    PITCH_FREE: 10,         // SWF _Str_18120 (v0.2.7: ei enää käytössä)
     BOTTOM_TOP_OFFSET: 42,  // SWF: uusin y = H − 19 − 23
     CLOSE_PULL: 10,
     BOTTOM_MIN_GAP: 13,     // SWF: osoittimen kärki 13 px palkin yläpuolella         // oma: näin paljon alle alkukohdan pitää vetää, muuten vapautus sulkee
@@ -71,7 +71,9 @@
     SCROLLBAR_W: 20,        // SWF RoomChatHistoryViewer _Str_4906
     MAX_ITEMS: 150,         // SWF chat.history.item.max.count oletus
     ROOM_ONLY: true,        // SWF: historia on huonekohtainen
-    GUARD_DEPTH: 6,         // oma lisäys: ei piiloteta tekstiä kauempana olevan kuplan alle
+    LIVE_TICK_MS: 6000,     // DarkUI getScrollSpeed oletus (NORMAL); huoneen asetus voi olla 3000/12000 — ei luettavissa
+    LIVE_TICK_PX: 15,       // DarkUI moveAllChatsUp(15)
+    LIVE_MAX_TICKS: 4,      // oma: tauon rako enintään 60 px historiassa
     HEAD_MIN_PX: 40,        // alle tämän näkyvää pikseliä = tyhjä pää (oikeat päät mitattu 832–1590)
     HEAD_PARTIAL: 0.75,     // v0.2.6: alle 75 % puhujan täydellisimmän pään pikseleistä = keskeneräinen pää
     RELOAD_DEBOUNCE: 1300,  // client tallentaa välimuistin 1000 ms viiveellä
@@ -493,24 +495,36 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
       if (sx == null) { sx = speakerX(E[i], hostLeft); how = 'speaker-now'; }
       if (sx == null) { sx = W / 2 + panX(); how = 'centre'; } // kamerasta riippuva kuten muutkin
       let left = Math.round(sx - w / 2);
-      left = Math.max(lo, Math.min(hi - w, left));
+      left = Math.max(0, Math.min(W - CFG.SCROLLBAR_W - w, left)); // live ei rajaa marginaaleihin; vain paneelin sisään
       return { el, w, h, left, sx, how, textBottom };
     });
-    // y: uusin top = 0, vanhemmat ylöspäin
+    // y — v0.2.7 (Res 08:32 "se on joku miten viestit asettuu"): pinotaan kuten LIVE-chat eikä SWF:n 19/10-sääntö.
+    // Live (DarkUI ChatWidgetView.tsx): uusi kupla syntyy alareunaan; makeRoom/checkOverlappingChats (:30-58) työntää
+    // vanhemmat vaakasuunnassa päällekkäiset kuplat ylös TASAN kiinni uuteen (DoChatsOverlap, ei päällekkäisyyttä);
+    // lisäksi kaikki nousevat 15 px joka getScrollSpeed (6000 ms) -tikki (:127-163). Sama simuloidaan tässä
+    // aikaleimojen (cachedAt) avulla; pitkä tauko rajataan LIVE_MAX_TICKS tikkiin, muuten tyhjää tulisi metrejä.
     const n = box.length;
-    box[n - 1].top = 0;
-    const hOverlap = (a, b) => a.left < b.left + b.w && b.left < a.left + a.w;
-    // SWF: 19 px riittää, koska SWF-kuplan teksti päättyy y=15 (tausta 24). DarkUI:n teksti on alempana ja
-    // voi olla monirivinen, joten uudempi kupla ei saa peittää vanhemman tekstiä: väli = max(19, tekstin alareuna + 1).
-    const pitchRow = b => Math.max(CFG.PITCH_ROW, b.textBottom + 1);
-    for (let i = n - 2; i >= 0; i--) {
-      const a = box[i], b = box[i + 1];
-      let top = b.top - (hOverlap(a, b) ? pitchRow(a) : CFG.PITCH_FREE);
-      for (let j = i + 2; j < Math.min(n, i + 2 + CFG.GUARD_DEPTH); j++) {
-        if (hOverlap(a, box[j])) top = Math.min(top, box[j].top - pitchRow(a));
+    const E2 = S.src.entries;
+    const ovl = (a, b, addB) => !((a.left + a.w) < b.left || a.left > (b.left + b.w) || (a.top + a.h) < (b.top + addB) || a.top > (b.top + addB + b.h));
+    const cascade = (i, moved, temp) => {
+      const c = box[i];
+      for (let j = i - 1; j >= 0; j--) {
+        const d = box[j];
+        if (temp.includes(j) || ((d.top + d.h) - moved) > (c.top + c.h)) continue;
+        if (ovl(c, d, -moved)) { const amount = Math.abs((d.top + d.h) - c.top); temp.push(j); d.top -= amount; cascade(j, amount, temp); }
       }
-      a.top = top;
+    };
+    for (let i = 0; i < n; i++) {
+      if (i > 0) {
+        const dt = (E2[i] && E2[i - 1] && E2[i].at && E2[i - 1].at) ? E2[i].at - E2[i - 1].at : 0;
+        const ticks = Math.max(0, Math.min(CFG.LIVE_MAX_TICKS, Math.floor(dt / CFG.LIVE_TICK_MS)));
+        if (ticks) for (let j = 0; j < i; j++) box[j].top -= CFG.LIVE_TICK_PX * ticks;
+      }
+      box[i].top = -box[i].h;
+      cascade(i, 0, [i]);
     }
+    // uusin on nyt top = −h; normalisoidaan niin, että uusimman top = 0 (kuten ennen)
+    const off = box[n - 1].top; for (const b of box) b.top -= off;
     const minTop = box[0].top < 0 ? Math.min(...box.map(b => b.top)) : 0;
     const last = box[n - 1];
     // SWF: uusimman yläreuna 42 px sisällön alareunasta; monirivinen DarkUI-kupla ei saa mennä palkin alle,
