@@ -3,7 +3,7 @@
 // @namespace    kupla-relab
 // @updateURL    https://nipanii.github.io/kupla-kuvat/skriptit/chat-historia.user.js
 // @downloadURL  https://nipanii.github.io/kupla-kuvat/skriptit/chat-historia.user.js
-// @version      0.2.5
+// @version      0.2.6
 // @description  Vanhan Habbo-clientin (roomchat) chat-historia: tartu huoneen chat-kuplaan ja vedä alas, niin aiemmat kuplat tulevat näkyviin puhujiensa kohdalle. Vedä takaisin ylös tai paina X / Esc, niin live-chat palaa.
 // @match        https://kupla.cc/*
 // @grant        none
@@ -49,7 +49,7 @@
   'use strict';
 
   const NS = '__kuplaChatHistoria';
-  const VERSION = '0.2.5';
+  const VERSION = '0.2.6';
   if (window[NS] && typeof window[NS].destroy === 'function') {
     try { window[NS].destroy(); } catch (e) { /* vanha versio voi olla rikki */ }
   }
@@ -71,8 +71,9 @@
     SCROLLBAR_W: 20,        // SWF RoomChatHistoryViewer _Str_4906
     MAX_ITEMS: 150,         // SWF chat.history.item.max.count oletus
     ROOM_ONLY: true,        // SWF: historia on huonekohtainen
-    GUARD_DEPTH: 6,
-    HEAD_MIN_PX: 40,        // alle tämän näkyvää pikseliä = tyhjä pää (oikeat päät mitattu 832–1590)         // oma lisäys: ei piiloteta tekstiä kauempana olevan kuplan alle
+    GUARD_DEPTH: 6,         // oma lisäys: ei piiloteta tekstiä kauempana olevan kuplan alle
+    HEAD_MIN_PX: 40,        // alle tämän näkyvää pikseliä = tyhjä pää (oikeat päät mitattu 832–1590)
+    HEAD_PARTIAL: 0.75,     // v0.2.6: alle 75 % puhujan täydellisimmän pään pikseleistä = keskeneräinen pää
     RELOAD_DEBOUNCE: 1300,  // client tallentaa välimuistin 1000 ms viiveellä
     POLL_MS: 3000,
     DOM_BUFFER: 1000,
@@ -196,6 +197,9 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
         image: m.imageUrl || m.avatarUrl || (Number.isInteger(m.avatarRef) ? avatars[m.avatarRef] : '') || '',
         at: Number.isFinite(+m.cachedAt) ? +m.cachedAt : 0,
         roomId: Number.isFinite(+m.roomId) ? +m.roomId : -1,
+        // PR #5 (reply-paketti, main 1afec1b): välimuistirivillä voi olla lainaus (IChatEntry.replyToName/Excerpt)
+        replyToName: typeof m.replyToName === 'string' ? m.replyToName.slice(0, 64) : '',
+        replyToExcerpt: typeof m.replyToExcerpt === 'string' ? m.replyToExcerpt.slice(0, 64) : '',
         entityId: Number.isFinite(+m.entityId) ? +m.entityId : -1,
       };
     });
@@ -320,24 +324,29 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
   // siinä on ≥ HEAD_MIN_PX näkyvää pikseliä. Varat järjestyksessä: saman puhujan muut kuvat (live ensin,
   // sitten välimuistin uusimmasta vanhimpaan), viimeisenä hotellin oma avatar-kuvapalvelu puhujan NYKYISESTÄ
   // figuurista (sama /avatarimage jota client itse käyttää; headonly=1&size=l → 58x92).
-  const quality = new Map(); // url -> Promise<'ok'|'blank'|'fail'>
-  const headQuality = u => {
-    if (quality.has(u)) return quality.get(u);
+  // v0.2.6 (mitattu robotilla reloadin jälkeen 08:20): ensimmäinen oma rivi uuden session alussa sai pään,
+  // josta puuttui ylin 13 riviä (hiukset/hattu): 625 näkyvää px vs normaali 915. DarkUI piirtää pään ennen kuin
+  // vaatteiden grafiikat ovat ladanneet (useChatWidget.ts setFigureImage) eikä päivitä jo tallennettua riviä.
+  // Siksi pää arvioidaan SUHTEESSA saman puhujan täydellisimpään kuvaan.
+  const pxCache = new Map(); // url -> Promise<number>  (-1 = ei lataudu, Infinity = ei voi mitata)
+  const headPx = u => {
+    if (pxCache.has(u)) return pxCache.get(u);
     const pr = new Promise(res => {
       try {
         const im = new Image(); const src = urlOf(u);
         if (!/^data:/i.test(src)) im.crossOrigin = 'anonymous';
         im.onload = () => {
-          if (!(im.naturalWidth > 1 && im.naturalHeight > 1)) return res('fail');
+          if (!(im.naturalWidth > 1 && im.naturalHeight > 1)) return res(-1);
           try { const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; const x = c.getContext('2d'); x.drawImage(im, 0, 0);
             const d = x.getImageData(0, 0, c.width, c.height).data; let n = 0; for (let k = 3; k < d.length; k += 4) if (d[k] > 16) n++;
-            res(n >= CFG.HEAD_MIN_PX ? 'ok' : 'blank'); } catch (e) { res('ok'); } // ristiinalkuperä: ei voi mitata → hyväksytään
+            res(n); } catch (e) { res(Infinity); } // ristiinalkuperä: ei voi mitata → hyväksytään
         };
-        im.onerror = () => res('fail'); im.src = src;
-      } catch (e) { res('fail'); }
+        im.onerror = () => res(-1); im.src = src;
+      } catch (e) { res(-1); }
     });
-    quality.set(u, pr); return pr;
+    pxCache.set(u, pr); return pr;
   };
+  const headQuality = async u => { const n = await headPx(u); return n < 0 ? 'fail' : (n < CFG.HEAD_MIN_PX ? 'blank' : 'ok'); };
   const nameImageList = (all, name) => {
     const out = [];
     document.querySelectorAll('.nitro-chat-widget .bubble-container').forEach(el => { const b = readBubble(el); if (b && b.name === name && imgOk(b.image) && !out.includes(b.image)) out.push(b.image); });
@@ -358,21 +367,29 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
   const verifyImages = async () => {
     if (!canvas || !S.src) return;
     const els = [...canvas.querySelectorAll('.kch-bubble .user-image')];
-    const urls = [...new Set(els.map(x => x.dataset.src))];
     let fixed = 0, removed = 0, imager = 0; const why = {};
-    for (const u of urls) {
-      const q = await headQuality(u);
-      if (q === 'ok') continue;
-      why[q] = (why[q] || 0) + 1; bad.add(u);
-      for (const x of els.filter(y => y.dataset.src === u)) {
-        const nm = x.closest('.kch-bubble').dataset.name; let done = false;
-        for (const alt of nameImageList(S.src.all || [], nm)) { if (alt !== u && !bad.has(alt) && await headQuality(alt) === 'ok') { x.style.backgroundImage = cssUrl(alt); x.dataset.src = alt; fixed++; done = true; break; } }
-        if (!done) { const fig = figureOf(nm); if (fig) { const iu = imagerUrl(fig); if (await headQuality(iu) === 'ok') { x.style.backgroundImage = cssUrl(iu); x.dataset.src = iu; x.classList.add('kch-imager'); imager++; done = true; } } }
-        if (!done) { x.remove(); removed++; }
-      }
+    const best = new Map(); // puhuja -> {url, px}
+    const bestFor = async nm => {
+      if (best.has(nm)) return best.get(nm);
+      let b = null;
+      for (const u of nameImageList(S.src.all || [], nm)) { const n = await headPx(u); if (n >= CFG.HEAD_MIN_PX && (!b || n > b.px)) b = { url: u, px: n }; }
+      best.set(nm, b); return b;
+    };
+    for (const x of els) {
+      const nm = x.closest('.kch-bubble').dataset.name; const u = x.dataset.src;
+      const n = await headPx(u); const b = await bestFor(nm);
+      let verdict = n < 0 ? 'fail' : (n < CFG.HEAD_MIN_PX ? 'blank' : 'ok');
+      if (verdict === 'ok' && b && Number.isFinite(n) && n < b.px * CFG.HEAD_PARTIAL) verdict = 'partial';
+      if (verdict === 'ok') continue;
+      why[verdict] = (why[verdict] || 0) + 1; bad.add(u);
+      if (b && b.url !== u) { x.style.backgroundImage = cssUrl(b.url); x.dataset.src = b.url; fixed++; continue; }
+      const fig = figureOf(nm);
+      if (fig) { const iu = imagerUrl(fig); if (await headQuality(iu) === 'ok') { x.style.backgroundImage = cssUrl(iu); x.dataset.src = iu; x.classList.add('kch-imager'); imager++; continue; } }
+      x.remove(); removed++;
     }
-    S.imgVerify = { urls: urls.length, bad: bad.size, why, fixed, imager, removed };
+    S.imgVerify = { heads: els.length, why, fixed, imager, removed };
   };
+
 
   const fp = e => e ? `${e.at}|${e.name}|${e.message}` : '';
 
@@ -447,7 +464,11 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
     el.dataset.name = e.name;
     // name ja message ovat clientin omaa HTML:ää (sama kuin dangerouslySetInnerHTML clientissa)
     el.innerHTML = `${bg}<div class="chat-bubble ${esc(e.bubbleClass)}" style="max-width:${liveMaxWidth()}"><div class="user-container">${img}</div>` +
-      `<div class="chat-content"><b class="username mr-1">${e.name}: </b><span class="message">${e.message}</span></div><div class="pointer"></div></div>`;
+      `<div class="chat-content">` +
+      // sama lainausrivi kuin live-kuplassa (ChatWidgetMessageView.tsx:163-167, CHAT_REPLY_MARKER '↩')
+      (e.replyToName ? `<div class="chat-reply-quote"><span class="chat-reply-quote-name">↩ ${esc(e.replyToName)}</span>` +
+        (e.replyToExcerpt ? `<span class="chat-reply-quote-text">${esc(e.replyToExcerpt)}</span>` : '') + `</div>` : '') +
+      `<b class="username mr-1">${e.name}: </b><span class="message">${e.message}</span></div><div class="pointer"></div></div>`;
     if (e.time) el.title = e.time.replace('.', ':');
     return el;
   };
@@ -705,7 +726,7 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
   window[NS] = {
     version: VERSION,
     _S: S,
-    _t: { resolveImages: (entries, all) => resolveImages(entries, all || (S.src && S.src.all) || []), verifyImages, headQuality, figureOf, imagerUrl, roomSegment: all => roomSegment(all).length, roomMatch: () => S.roomMatch, cfg: CFG },
+    _t: { resolveImages: (entries, all) => resolveImages(entries, all || (S.src && S.src.all) || []), verifyImages, headQuality, headPx, figureOf, imagerUrl, roomSegment: all => roomSegment(all).length, roomMatch: () => S.roomMatch, cfg: CFG },
     open: h => open(h, CFG.MIN_H),
     close: () => close('api'),
     destroy,
