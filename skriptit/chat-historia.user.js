@@ -3,7 +3,7 @@
 // @namespace    kupla-relab
 // @updateURL    https://nipanii.github.io/kupla-kuvat/skriptit/chat-historia.user.js
 // @downloadURL  https://nipanii.github.io/kupla-kuvat/skriptit/chat-historia.user.js
-// @version      0.2.4
+// @version      0.2.5
 // @description  Vanhan Habbo-clientin (roomchat) chat-historia: tartu huoneen chat-kuplaan ja vedä alas, niin aiemmat kuplat tulevat näkyviin puhujiensa kohdalle. Vedä takaisin ylös tai paina X / Esc, niin live-chat palaa.
 // @match        https://kupla.cc/*
 // @grant        none
@@ -49,7 +49,7 @@
   'use strict';
 
   const NS = '__kuplaChatHistoria';
-  const VERSION = '0.2.4';
+  const VERSION = '0.2.5';
   if (window[NS] && typeof window[NS].destroy === 'function') {
     try { window[NS].destroy(); } catch (e) { /* vanha versio voi olla rikki */ }
   }
@@ -65,12 +65,14 @@
     PITCH_ROW: 19,          // SWF _Str_3729
     PITCH_FREE: 10,         // SWF _Str_18120
     BOTTOM_TOP_OFFSET: 42,  // SWF: uusin y = H − 19 − 23
-    CLOSE_PULL: 10,         // oma: näin paljon alle alkukohdan pitää vetää, muuten vapautus sulkee
+    CLOSE_PULL: 10,
+    BOTTOM_MIN_GAP: 13,     // SWF: osoittimen kärki 13 px palkin yläpuolella         // oma: näin paljon alle alkukohdan pitää vetää, muuten vapautus sulkee
     SIDE_MARGIN: 20,        // SWF _Str_12991
     SCROLLBAR_W: 20,        // SWF RoomChatHistoryViewer _Str_4906
     MAX_ITEMS: 150,         // SWF chat.history.item.max.count oletus
     ROOM_ONLY: true,        // SWF: historia on huonekohtainen
-    GUARD_DEPTH: 6,         // oma lisäys: ei piiloteta tekstiä kauempana olevan kuplan alle
+    GUARD_DEPTH: 6,
+    HEAD_MIN_PX: 40,        // alle tämän näkyvää pikseliä = tyhjä pää (oikeat päät mitattu 832–1590)         // oma lisäys: ei piiloteta tekstiä kauempana olevan kuplan alle
     RELOAD_DEBOUNCE: 1300,  // client tallentaa välimuistin 1000 ms viiveellä
     POLL_MS: 3000,
     DOM_BUFFER: 1000,
@@ -107,6 +109,7 @@
 .kch-panel .kch-bubble.kch-measure{visibility:hidden}
 .kch-panel .kch-bubble .pointer.kch-ptr{left:var(--kch-ptr-x)!important;transform:none!important}
 .kch-panel .kch-bubble.kch-noptr .pointer{display:none}
+.kch-panel .kch-bubble .user-image.kch-imager{background-size:contain!important;background-position:center top!important}
 .kch-empty{position:absolute;left:0;right:0;bottom:16px;color:#fff;opacity:.7;font-size:12px;text-align:center}
 .kch-grab{position:absolute;left:0;right:0;bottom:0;height:${CFG.GRAB_H}px;background:url(${IMG.bg}) repeat-x;cursor:ns-resize;--kch-x-inset:3px}
 .kch-stripe{position:absolute;left:0;right:0;top:7px;height:21px;pointer-events:none}
@@ -234,6 +237,11 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
       image: el.querySelector('.user-image') ? el.querySelector('.user-image').style.backgroundImage : '',
     };
   };
+  // v0.2.5 (Res: kameraa siirtäessä historian kuplat eivät seuraa kuten live): DarkUI siirtää live-kuplia
+  // vaakasuunnassa huoneen vedon verran (useChatWidget.ts:361-370, ROOM_DRAG → chat.left += offsetX; y ei muutu).
+  // SWF teki saman (RoomChatWidget.onRoomViewUpdate :301-331, _Str_7165). Siksi jokainen mitattu x tallennetaan
+  // yhdessä sen hetken huoneen näyttöoffsetin kanssa ja korjataan nykyiseen offsettiin.
+  const panX = () => { try { const r = RE(), room = activeRoomId(); const p = r && room && r.getRoomInstanceRenderingCanvasOffset(room); return p && Number.isFinite(p.x) ? p.x : 0; } catch (e) { return 0; } };
   const measureBubble = (el, isNew) => {
     try {
       if (!el.isConnected) return;
@@ -242,8 +250,9 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
       const r = el.getBoundingClientRect();
       const host = hostEl().getBoundingClientRect();
       const text = plain(b.html);
-      if (!seen.some(s => s.name === b.name && s.text === text && Math.abs(s.cx - (r.left + r.width / 2 - host.left)) < 2)) {
-        seen.push({ name: b.name, text, cx: r.left + r.width / 2 - host.left, t: Date.now() });
+      const ox = panX(), cxNow = r.left + r.width / 2 - host.left;
+      if (!seen.some(s => s.name === b.name && s.text === text && Math.abs(s.cx + (ox - s.ox) - cxNow) < 2)) {
+        seen.push({ name: b.name, text, cx: cxNow, ox, t: Date.now() });
         if (seen.length > CFG.DOM_BUFFER) seen.splice(0, seen.length - CFG.DOM_BUFFER);
       }
       if (isNew) {
@@ -265,7 +274,7 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
       if (e.at && dt < -5000) continue;
       if (dt < bestDt) { bestDt = dt; best = s; }
     }
-    return best ? best.cx : null;
+    return best ? best.cx + (panX() - (best.ox || 0)) : null;
   };
 
   // Avatarin pää: rivin oma kuva, jos se kelpaa; muuten saman nimen tuorein toimiva kuva (live-kupla ensin,
@@ -306,30 +315,72 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
   const urlOf = u => String(u || '').trim().replace(/^url\(\s*["']?/, '').replace(/["']?\s*\)$/, '');
   const decodeOk = u => new Promise(res => { try { const im = new Image(); im.onload = () => res(im.naturalWidth > 1 && im.naturalHeight > 1); im.onerror = () => res(false); im.src = urlOf(u); } catch (e) { res(false); } });
   // renderöinnin jälkeen: jokainen käytetty URL dekoodataan; rikki → saman nimen toinen kuva, muuten pää pois
+  // v0.2.5 (Res 08:08, uudelleentulon jälkeen: "nyt on taas oma kuva rikki"): kuva voi latautua mutta olla
+  // tyhjä/läpinäkyvä (esim. avatar piirretty ennen kuin vaatteet ladattiin). Nyt "kelpaa" = dekoodautuu JA
+  // siinä on ≥ HEAD_MIN_PX näkyvää pikseliä. Varat järjestyksessä: saman puhujan muut kuvat (live ensin,
+  // sitten välimuistin uusimmasta vanhimpaan), viimeisenä hotellin oma avatar-kuvapalvelu puhujan NYKYISESTÄ
+  // figuurista (sama /avatarimage jota client itse käyttää; headonly=1&size=l → 58x92).
+  const quality = new Map(); // url -> Promise<'ok'|'blank'|'fail'>
+  const headQuality = u => {
+    if (quality.has(u)) return quality.get(u);
+    const pr = new Promise(res => {
+      try {
+        const im = new Image(); const src = urlOf(u);
+        if (!/^data:/i.test(src)) im.crossOrigin = 'anonymous';
+        im.onload = () => {
+          if (!(im.naturalWidth > 1 && im.naturalHeight > 1)) return res('fail');
+          try { const c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight; const x = c.getContext('2d'); x.drawImage(im, 0, 0);
+            const d = x.getImageData(0, 0, c.width, c.height).data; let n = 0; for (let k = 3; k < d.length; k += 4) if (d[k] > 16) n++;
+            res(n >= CFG.HEAD_MIN_PX ? 'ok' : 'blank'); } catch (e) { res('ok'); } // ristiinalkuperä: ei voi mitata → hyväksytään
+        };
+        im.onerror = () => res('fail'); im.src = src;
+      } catch (e) { res('fail'); }
+    });
+    quality.set(u, pr); return pr;
+  };
+  const nameImageList = (all, name) => {
+    const out = [];
+    document.querySelectorAll('.nitro-chat-widget .bubble-container').forEach(el => { const b = readBubble(el); if (b && b.name === name && imgOk(b.image) && !out.includes(b.image)) out.push(b.image); });
+    for (let i = all.length - 1; i >= 0; i--) { const e = all[i]; if (e.type === 1 && e.name === name && imgOk(e.image) && !out.includes(e.image)) out.push(e.image); }
+    return out;
+  };
+  const figureOf = name => {
+    try {
+      const r = RE(); const sdm = own(r, '_sessionDataManager');
+      if (sdm && own(sdm, '_name') === name && own(sdm, '_figure')) return own(sdm, '_figure');
+      const sess = own(r, '_roomSessionManager').getSession(activeRoomId());
+      const udm = sess && sess.userDataManager;
+      const ud = udm && (typeof udm.getUserDataByName === 'function' ? udm.getUserDataByName(name) : null);
+      return ud && ud.figure ? ud.figure : null;
+    } catch (e) { return null; }
+  };
+  const imagerUrl = fig => `${location.origin}/avatarimage?figure=${encodeURIComponent(fig)}&headonly=1&size=l`;
   const verifyImages = async () => {
     if (!canvas || !S.src) return;
     const els = [...canvas.querySelectorAll('.kch-bubble .user-image')];
     const urls = [...new Set(els.map(x => x.dataset.src))];
-    let fixed = 0, removed = 0;
+    let fixed = 0, removed = 0, imager = 0; const why = {};
     for (const u of urls) {
-      if (await decodeOk(u)) continue;
-      bad.add(u);
-      const m = nameImages(S.src.all || []);
+      const q = await headQuality(u);
+      if (q === 'ok') continue;
+      why[q] = (why[q] || 0) + 1; bad.add(u);
       for (const x of els.filter(y => y.dataset.src === u)) {
-        const nm = x.closest('.kch-bubble').dataset.name; const alt = m.get(nm);
-        if (alt && alt !== u && await decodeOk(alt)) { x.style.backgroundImage = cssUrl(alt); x.dataset.src = alt; fixed++; }
-        else { x.remove(); removed++; }
+        const nm = x.closest('.kch-bubble').dataset.name; let done = false;
+        for (const alt of nameImageList(S.src.all || [], nm)) { if (alt !== u && !bad.has(alt) && await headQuality(alt) === 'ok') { x.style.backgroundImage = cssUrl(alt); x.dataset.src = alt; fixed++; done = true; break; } }
+        if (!done) { const fig = figureOf(nm); if (fig) { const iu = imagerUrl(fig); if (await headQuality(iu) === 'ok') { x.style.backgroundImage = cssUrl(iu); x.dataset.src = iu; x.classList.add('kch-imager'); imager++; done = true; } } }
+        if (!done) { x.remove(); removed++; }
       }
     }
-    S.imgVerify = { urls: urls.length, bad: bad.size, fixed, removed };
+    S.imgVerify = { urls: urls.length, bad: bad.size, why, fixed, imager, removed };
   };
+
   const fp = e => e ? `${e.at}|${e.name}|${e.message}` : '';
 
   // ---------------------------------------------------------------- paneeli
   const S = {
     open: false, mode: 'idle', startX: 0, startY: 0, startH: 0, startScroll: 0,
     closeLine: CFG.MIN_H, pinned: true, swallowTail: false,
-    src: null, lastFp: '', xSources: null, imgVerify: null, roomMatch: null,
+    src: null, lastFp: '', xSources: null, imgVerify: null, roomMatch: null, layoutPanX: 0,
     opens: 0, closes: 0, lastCloseReason: '',
   };
   let panel = null, list = null, canvas = null;
@@ -407,7 +458,7 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
     const E = S.src.entries;
     const els = [...canvas.querySelectorAll('.kch-bubble')];
     if (!els.length) return;
-    const W = list.clientWidth || hostEl().clientWidth;
+    const W = list.offsetWidth || hostEl().clientWidth; // offsetWidth: ei muutu kun pystyvierityspalkki ilmestyy
     const hostLeft = hostEl().getBoundingClientRect().left;
     const lo = CFG.SIDE_MARGIN, hi = W - CFG.SCROLLBAR_W - CFG.SIDE_MARGIN;
     const box = els.map((el, i) => {
@@ -419,7 +470,7 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
         if (rs.length) textBottom = Math.ceil(Math.max(...rs.map(q => q.bottom)) - r0.top); } catch (err) {} }
       let sx = measuredX(E[i]); let how = 'measured';
       if (sx == null) { sx = speakerX(E[i], hostLeft); how = 'speaker-now'; }
-      if (sx == null) { sx = W / 2; how = 'centre'; }
+      if (sx == null) { sx = W / 2 + panX(); how = 'centre'; } // kamerasta riippuva kuten muutkin
       let left = Math.round(sx - w / 2);
       left = Math.max(lo, Math.min(hi - w, left));
       return { el, w, h, left, sx, how, textBottom };
@@ -441,13 +492,15 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
     }
     const minTop = box[0].top < 0 ? Math.min(...box.map(b => b.top)) : 0;
     const last = box[n - 1];
-    const bottomPad = CFG.BOTTOM_TOP_OFFSET - last.h; // SWF: uusimman yläreuna 42 px sisällön alareunasta
-    const contentH = (last.top - minTop) + last.h + Math.max(0, bottomPad) + 8;
+    // SWF: uusimman yläreuna 42 px sisällön alareunasta; monirivinen DarkUI-kupla ei saa mennä palkin alle,
+    // joten väli alareunaan on vähintään 13 px (SWF:n osoittimen kärjen etäisyys palkista).
+    const bottomPad = Math.max(CFG.BOTTOM_MIN_GAP, CFG.BOTTOM_TOP_OFFSET - last.h);
+    const contentH = (last.top - minTop) + last.h + bottomPad + 8;
     canvas.style.height = contentH + 'px';
     const counts = { measured: 0, 'speaker-now': 0, centre: 0 };
     for (const b of box) {
       b.el.style.left = b.left + 'px';
-      b.el.style.bottom = (Math.max(0, bottomPad) + (last.top + last.h) - (b.top + b.h)) + 'px';
+      b.el.style.bottom = (bottomPad + (last.top + last.h) - (b.top + b.h)) + 'px';
       const ptr = b.el.querySelector('.pointer');
       const inRange = b.how !== 'centre' && b.sx >= lo && b.sx <= hi;
       b.el.classList.toggle('kch-noptr', !inRange);
@@ -456,9 +509,11 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
         ptr.classList.add('kch-ptr'); b.el.style.setProperty('--kch-ptr-x', px + 'px');
       }
       b.el.classList.remove('kch-measure');
+      b.el.dataset.how = b.how;
       counts[b.how]++;
     }
     S.xSources = counts;
+    S.layoutPanX = panX();
   };
 
   const renderAll = () => {
@@ -552,10 +607,11 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
         // Tässä: sisällön korkeus H0 valitaan niin, että historian uusin kupla (top = H0 − 42) osuu
         // täsmälleen alimman live-kuplan kohdalle, ja alue kasvaa siitä osoittimen mukana.
         const hostTop = hostEl().getBoundingClientRect().top;
-        let liveTop = null;
+        let liveTop = null, liveH = 0;
         document.querySelectorAll('.nitro-chat-widget .bubble-container').forEach(b => {
-          const t = b.getBoundingClientRect().top - hostTop; if (liveTop === null || t > liveTop) liveTop = t; });
-        const H0 = liveTop !== null ? liveTop + CFG.BOTTOM_TOP_OFFSET : (S.startY - hostTop) + CFG.GRAB_H / 2;
+          const q = b.getBoundingClientRect(); const t = q.top - hostTop; if (liveTop === null || t > liveTop) { liveTop = t; liveH = q.height; } });
+        // sama sääntö kuin layout(): uusimman yläreuna = H − max(42, h + 13)
+        const H0 = liveTop !== null ? liveTop + Math.max(CFG.BOTTOM_TOP_OFFSET, liveH + CFG.BOTTOM_MIN_GAP) : (S.startY - hostTop) + CFG.GRAB_H / 2;
         S.mode = 'resize';
         S.startH = H0 + CFG.GRAB_H;   // paneelin korkeus = H0 + palkki; tästä eteenpäin + (osoitin − aktivointikohta)
         S.startY = e.clientY;
@@ -630,6 +686,8 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
   sweepLive();
   intervals.push(setInterval(attachObserver, 2000));
   intervals.push(setInterval(() => { if (S.open) refresh(); }, CFG.POLL_MS));
+  // kamera liikkuu historian ollessa auki → kuplien x uudelleen (y ei muutu, kuten livessä)
+  intervals.push(setInterval(() => { if (S.open && S.mode === 'idle' && panX() !== S.layoutPanX) layout(); }, 100));
 
   // ---------------------------------------------------------------- API
   const destroy = () => {
@@ -647,7 +705,7 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
   window[NS] = {
     version: VERSION,
     _S: S,
-    _t: { resolveImages: (entries, all) => resolveImages(entries, all || (S.src && S.src.all) || []), verifyImages, roomSegment: all => roomSegment(all).length, roomMatch: () => S.roomMatch, cfg: CFG },
+    _t: { resolveImages: (entries, all) => resolveImages(entries, all || (S.src && S.src.all) || []), verifyImages, headQuality, figureOf, imagerUrl, roomSegment: all => roomSegment(all).length, roomMatch: () => S.roomMatch, cfg: CFG },
     open: h => open(h, CFG.MIN_H),
     close: () => close('api'),
     destroy,
