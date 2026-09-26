@@ -1,6 +1,8 @@
 // ==UserScript==
 // @name         Kupla chat-historia (vedä kuplista alas)
 // @namespace    kupla-relab
+// @updateURL    https://nipanii.github.io/kupla-kuvat/skriptit/chat-historia.user.js
+// @downloadURL  https://nipanii.github.io/kupla-kuvat/skriptit/chat-historia.user.js
 // @version      0.2.0
 // @description  Vanhan Habbo-clientin (roomchat) chat-historia: tartu huoneen chat-kuplaan ja vedä alas, niin aiemmat kuplat tulevat näkyviin puhujiensa kohdalle. Vedä takaisin ylös tai paina X / Esc, niin live-chat palaa.
 // @match        https://kupla.cc/*
