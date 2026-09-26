@@ -3,7 +3,7 @@
 // @namespace    kupla-relab
 // @updateURL    https://nipanii.github.io/kupla-kuvat/skriptit/chat-historia.user.js
 // @downloadURL  https://nipanii.github.io/kupla-kuvat/skriptit/chat-historia.user.js
-// @version      0.2.2
+// @version      0.2.3
 // @description  Vanhan Habbo-clientin (roomchat) chat-historia: tartu huoneen chat-kuplaan ja vedä alas, niin aiemmat kuplat tulevat näkyviin puhujiensa kohdalle. Vedä takaisin ylös tai paina X / Esc, niin live-chat palaa.
 // @match        https://kupla.cc/*
 // @grant        none
@@ -49,7 +49,7 @@
   'use strict';
 
   const NS = '__kuplaChatHistoria';
-  const VERSION = '0.2.2';
+  const VERSION = '0.2.3';
   if (window[NS] && typeof window[NS].destroy === 'function') {
     try { window[NS].destroy(); } catch (e) { /* vanha versio voi olla rikki */ }
   }
@@ -65,6 +65,7 @@
     PITCH_ROW: 19,          // SWF _Str_3729
     PITCH_FREE: 10,         // SWF _Str_18120
     BOTTOM_TOP_OFFSET: 42,  // SWF: uusin y = H − 19 − 23
+    CLOSE_PULL: 10,         // oma: näin paljon alle alkukohdan pitää vetää, muuten vapautus sulkee
     SIDE_MARGIN: 20,        // SWF _Str_12991
     SCROLLBAR_W: 20,        // SWF RoomChatHistoryViewer _Str_4906
     MAX_ITEMS: 150,         // SWF chat.history.item.max.count oletus
@@ -117,7 +118,11 @@
   background:url(${IMG.x}) no-repeat;cursor:pointer;pointer-events:auto}
 .kch-close:hover{background-image:url(${IMG.xHi})}
 .kch-close:active{background-image:url(${IMG.xPr})}
-body.kch-active .nitro-chat-widget{visibility:hidden!important}
+/* v0.2.3: live-kerros pois näkyvistä KOKONAAN. visibility:hidden ei riittänyt, koska DarkUI:n
+   .bubble-container.visible asettaa lapsilleen visibility:visible (mitattu: 12/12 live-kuplaa näkyi
+   historian 67 % taustan läpi = Resin "blendaa"). opacity periytyy koko alipuuhun eikä lapsi voi kumota sitä;
+   display:nonea ei käytetä, koska DarkUI mittaa kuplien offsetHeightia uusia viestejä asetellessaan. */
+body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!important}
 .nitro-chat-widget .bubble-container{touch-action:none}
 `;
   const ensureStyle = () => {
@@ -516,10 +521,20 @@ body.kch-active .nitro-chat-widget{visibility:hidden!important}
     const dy = e.clientY - S.startY, dx = e.clientX - S.startX;
     if (S.mode === 'pending') {
       if (dy > CFG.HYSTERESIS) {
+        // SWF RoomChatWidget._Str_23995 (:977-1026): vedon alussa alue kutistuu juuri alimman live-kuplan
+        // alle ja kuplia siirretään niin, etteivät ne hyppää; sen jälkeen alue kasvaa vedon verran
+        // (_Str_23426 :904-908) ja kuplat (alhaalle ankkuroituina, _Str_19662) kulkevat vedon mukana.
+        // Tässä: sisällön korkeus H0 valitaan niin, että historian uusin kupla (top = H0 − 42) osuu
+        // täsmälleen alimman live-kuplan kohdalle, ja alue kasvaa siitä osoittimen mukana.
         const hostTop = hostEl().getBoundingClientRect().top;
+        let liveTop = null;
+        document.querySelectorAll('.nitro-chat-widget .bubble-container').forEach(b => {
+          const t = b.getBoundingClientRect().top - hostTop; if (liveTop === null || t > liveTop) liveTop = t; });
+        const H0 = liveTop !== null ? liveTop + CFG.BOTTOM_TOP_OFFSET : (S.startY - hostTop) + CFG.GRAB_H / 2;
         S.mode = 'resize';
-        S.startH = (S.startY - hostTop) + CFG.GRAB_H / 2;
-        open(S.startH + dy, S.startY - hostTop);
+        S.startH = H0 + CFG.GRAB_H;   // paneelin korkeus = H0 + palkki; tästä eteenpäin + (osoitin − aktivointikohta)
+        S.startY = e.clientY;
+        open(S.startH, H0 + CFG.CLOSE_PULL);
         swallow(e);
       } else if (dy < -CFG.HYSTERESIS || Math.abs(dx) > CFG.ABORT_DX) {
         S.mode = 'idle';
@@ -542,8 +557,9 @@ body.kch-active .nitro-chat-widget{visibility:hidden!important}
     if (mode === 'pending' || mode === 'scrollpend') return; // klikkaus kulkee normaalisti
     if (mode === 'resize' && panel) {
       const hostTop = hostEl().getBoundingClientRect().top;
-      const barMid = panelBottom() - hostTop - CFG.GRAB_H / 2;
-      if (barMid < S.closeLine) close('drag-up');
+      // SWF _Str_20437 (:1028-1049): vapautus niin, ettei alue kasvanut perusrajan yli → sulkeutuu
+      const barTop = panelBottom() - hostTop - CFG.GRAB_H;
+      if (barTop < S.closeLine) close('drag-up');
     }
     swallow(e);
     S.swallowTail = true;
