@@ -3,7 +3,7 @@
 // @namespace    kupla-relab
 // @updateURL    https://nipanii.github.io/kupla-kuvat/skriptit/chat-historia.user.js
 // @downloadURL  https://nipanii.github.io/kupla-kuvat/skriptit/chat-historia.user.js
-// @version      0.2.0
+// @version      0.2.1
 // @description  Vanhan Habbo-clientin (roomchat) chat-historia: tartu huoneen chat-kuplaan ja vedä alas, niin aiemmat kuplat tulevat näkyviin puhujiensa kohdalle. Vedä takaisin ylös tai paina X / Esc, niin live-chat palaa.
 // @match        https://kupla.cc/*
 // @grant        none
@@ -49,7 +49,7 @@
   'use strict';
 
   const NS = '__kuplaChatHistoria';
-  const VERSION = '0.2.0';
+  const VERSION = '0.2.1';
   if (window[NS] && typeof window[NS].destroy === 'function') {
     try { window[NS].destroy(); } catch (e) { /* vanha versio voi olla rikki */ }
   }
@@ -261,10 +261,53 @@ body.kch-active .nitro-chat-widget{visibility:hidden!important}
     return best ? best.cx : null;
   };
 
+  // Avatarin pää: rivin oma kuva, jos se kelpaa; muuten saman nimen tuorein toimiva kuva (live-kupla ensin,
+  // sitten välimuistin uusin). Res 2026-09-26: "mun oma user-image bubbleissa ei lataa" — syy ei toistunut
+  // robotilla (kaikki 5 välimuistikuvaa dekoodautuvat), joten korjaus on puolustava + diag().
+  const imgOk = u => typeof u === 'string' && /^(url\(|data:image\/|https?:)/i.test(u.trim()) && u.length > 30;
+  const bad = new Set();   // URLit jotka eivät dekoodautuneet
+  const nameImages = all => {
+    const m = new Map();
+    for (let i = all.length - 1; i >= 0; i--) { const e = all[i]; if (e.type === 1 && e.name && !m.has(e.name) && imgOk(e.image) && !bad.has(e.image)) m.set(e.name, e.image); }
+    document.querySelectorAll('.nitro-chat-widget .bubble-container').forEach(el => {
+      const b = readBubble(el); if (b && b.name && imgOk(b.image) && !bad.has(b.image)) m.set(b.name, b.image); // live = nykyinen, voittaa
+    });
+    return m;
+  };
+  const resolveImages = (entries, all) => {
+    const m = nameImages(all); const stats = { own: 0, sameName: 0, none: 0 };
+    for (const e of entries) {
+      if (imgOk(e.image) && !bad.has(e.image)) { e.img = e.image; stats.own++; }
+      else if (m.has(e.name)) { e.img = m.get(e.name); stats.sameName++; }
+      else { e.img = ''; stats.none++; }
+    }
+    return stats;
+  };
   const getSource = () => {
     const c = loadCache();
-    if (c && c.entries.length) return { kind: 'cache', key: c.key, entries: roomSegment(c.entries) };
-    return { kind: 'dom', key: null, entries: domBuffer.slice(-CFG.MAX_ITEMS) };
+    if (c && c.entries.length) { const entries = roomSegment(c.entries); const img = resolveImages(entries, c.entries); return { kind: 'cache', key: c.key, entries, img, all: c.entries }; }
+    const entries = domBuffer.slice(-CFG.MAX_ITEMS);
+    return { kind: 'dom', key: null, entries, img: resolveImages(entries, domBuffer), all: domBuffer };
+  };
+  const urlOf = u => String(u || '').trim().replace(/^url\(\s*["']?/, '').replace(/["']?\s*\)$/, '');
+  const decodeOk = u => new Promise(res => { try { const im = new Image(); im.onload = () => res(im.naturalWidth > 1 && im.naturalHeight > 1); im.onerror = () => res(false); im.src = urlOf(u); } catch (e) { res(false); } });
+  // renderöinnin jälkeen: jokainen käytetty URL dekoodataan; rikki → saman nimen toinen kuva, muuten pää pois
+  const verifyImages = async () => {
+    if (!canvas || !S.src) return;
+    const els = [...canvas.querySelectorAll('.kch-bubble .user-image')];
+    const urls = [...new Set(els.map(x => x.dataset.src))];
+    let fixed = 0, removed = 0;
+    for (const u of urls) {
+      if (await decodeOk(u)) continue;
+      bad.add(u);
+      const m = nameImages(S.src.all || []);
+      for (const x of els.filter(y => y.dataset.src === u)) {
+        const nm = x.closest('.kch-bubble').dataset.name; const alt = m.get(nm);
+        if (alt && alt !== u && await decodeOk(alt)) { x.style.backgroundImage = cssUrl(alt); x.dataset.src = alt; fixed++; }
+        else { x.remove(); removed++; }
+      }
+    }
+    S.imgVerify = { urls: urls.length, bad: bad.size, fixed, removed };
   };
   const fp = e => e ? `${e.at}|${e.name}|${e.message}` : '';
 
@@ -272,7 +315,7 @@ body.kch-active .nitro-chat-widget{visibility:hidden!important}
   const S = {
     open: false, mode: 'idle', startX: 0, startY: 0, startH: 0, startScroll: 0,
     closeLine: CFG.MIN_H, pinned: true, swallowTail: false,
-    src: null, lastFp: '', xSources: null,
+    src: null, lastFp: '', xSources: null, imgVerify: null,
     opens: 0, closes: 0, lastCloseReason: '', closingTimer: null,
   };
   let panel = null, list = null, canvas = null;
@@ -323,7 +366,9 @@ body.kch-active .nitro-chat-widget{visibility:hidden!important}
     const el = document.createElement('div');
     el.className = 'bubble-container visible kch-bubble kch-measure';
     const bg = (e.style === 0 && e.color) ? `<div class="user-container-bg" style="background-color:${esc(e.color)}"></div>` : '';
-    const img = e.image ? `<div class="user-image" style="background-image:${esc(cssUrl(e.image))}"></div>` : '';
+    const src = e.img !== undefined ? e.img : e.image;
+    const img = src ? `<div class="user-image" data-src="${esc(src)}" style="background-image:${esc(cssUrl(src))}"></div>` : '';
+    el.dataset.name = e.name;
     // name ja message ovat clientin omaa HTML:ää (sama kuin dangerouslySetInnerHTML clientissa)
     el.innerHTML = `${bg}<div class="chat-bubble ${esc(e.bubbleClass)}" style="max-width:350px"><div class="user-container">${img}</div>` +
       `<div class="chat-content"><b class="username mr-1">${e.name}: </b><span class="message">${e.message}</span></div><div class="pointer"></div></div>`;
@@ -406,6 +451,7 @@ body.kch-active .nitro-chat-widget{visibility:hidden!important}
     canvas.appendChild(frag);
     layout();
     if (wasPinned) pinBottom(); else list.scrollTop = list.scrollHeight - keepFromBottom;
+    verifyImages();
   };
 
   const refresh = () => {
@@ -574,15 +620,28 @@ body.kch-active .nitro-chat-widget{visibility:hidden!important}
   window[NS] = {
     version: VERSION,
     _S: S,
+    _t: { resolveImages: (entries, all) => resolveImages(entries, all || (S.src && S.src.all) || []), verifyImages },
     open: h => open(h, CFG.MIN_H),
     close: () => close('api'),
     destroy,
+    // Resille: liitä konsoliin __kuplaChatHistoria.diag() ja lähetä tulos (ei viestien tekstiä)
+    diag: async () => {
+      const c = loadCache(); if (!c) return { cache: null };
+      const by = {};
+      for (const e of c.entries) { if (e.type !== 1) continue; const k = e.name; const b = by[k] = by[k] || { n: 0, noImg: 0, kinds: {}, urls: new Set() };
+        b.n++; if (!imgOk(e.image)) b.noImg++; const kd = !e.image ? 'none' : urlOf(e.image).slice(0, 5); b.kinds[kd] = (b.kinds[kd] || 0) + 1; if (e.image) b.urls.add(e.image); }
+      const me = own(own(RE(), '_sessionDataManager'), '_name') || null;
+      const out = { key: c.key, me, version: VERSION, speakers: {} };
+      for (const k in by) { const b = by[k]; const dec = []; for (const u of [...b.urls].slice(-3)) dec.push({ len: u.length, head: urlOf(u).slice(0, 22), decodes: await decodeOk(u) });
+        out.speakers[k === me ? k + ' (OMA)' : k] = { n: b.n, noImg: b.noImg, kinds: b.kinds, distinctImgs: b.urls.size, lastImgs: dec }; }
+      return out;
+    },
     state: () => ({
       version: VERSION, open: S.open, mode: S.mode, opens: S.opens, closes: S.closes,
       lastCloseReason: S.lastCloseReason, source: S.src ? S.src.kind : null, key: S.src ? S.src.key : null,
       total: S.src ? S.src.entries.length : null, rendered: canvas ? canvas.querySelectorAll('.kch-bubble').length : 0,
       height: panel ? Math.round(panel.getBoundingClientRect().height) : 0, pinned: S.pinned,
-      closeLine: S.closeLine, xSources: S.xSources, seen: seen.length, domBuffer: domBuffer.length,
+      closeLine: S.closeLine, xSources: S.xSources, img: S.src ? S.src.img : null, imgVerify: S.imgVerify, seen: seen.length, domBuffer: domBuffer.length,
       panelInDom: !!(panel && panel.isConnected), liveHidden: document.body.classList.contains('kch-active'),
     }),
   };
