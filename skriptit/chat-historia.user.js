@@ -3,7 +3,7 @@
 // @namespace    kupla-relab
 // @updateURL    https://nipanii.github.io/kupla-kuvat/skriptit/chat-historia.user.js
 // @downloadURL  https://nipanii.github.io/kupla-kuvat/skriptit/chat-historia.user.js
-// @version      0.2.3
+// @version      0.2.4
 // @description  Vanhan Habbo-clientin (roomchat) chat-historia: tartu huoneen chat-kuplaan ja vedä alas, niin aiemmat kuplat tulevat näkyviin puhujiensa kohdalle. Vedä takaisin ylös tai paina X / Esc, niin live-chat palaa.
 // @match        https://kupla.cc/*
 // @grant        none
@@ -49,7 +49,7 @@
   'use strict';
 
   const NS = '__kuplaChatHistoria';
-  const VERSION = '0.2.3';
+  const VERSION = '0.2.4';
   if (window[NS] && typeof window[NS].destroy === 'function') {
     try { window[NS].destroy(); } catch (e) { /* vanha versio voi olla rikki */ }
   }
@@ -200,14 +200,21 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
   };
 
   // SWF-historia on huonekohtainen: vain nykyisen huoneen viimeisimmän sisääntulon jälkeiset rivit
+  // v0.2.4 (Res 08:01 "näyttää vaan että ei historiaa tässä huoneessa"): v0.2.1–0.2.3 otti vain rivit
+  // VIIMEISEN huoneentulo-rivin (type 2) jälkeen. DarkUI kirjoittaa type-2-rivin joka kerta kun huoneeseen
+  // tullaan uudelleen (reload / ulos-sisään, useChatHistory.ts:259-266), joten heti paluun jälkeen jakso oli
+  // tyhjä. Nyt: kaikki tämän huoneen (roomId) rivit koko välimuistista; jos huonetta ei tiedetä tai yksikään
+  // rivi ei osu, näytetään viimeisimmät rivit huoneesta riippumatta — ei koskaan tyhjää kun historiaa on.
   const roomSegment = all => {
-    let from = 0;
-    if (CFG.ROOM_ONLY) {
-      for (let i = all.length - 1; i >= 0; i--) { if (all[i].type === 2) { from = i + 1; break; } }
-    }
+    const chat = all.filter(e => e.type === 1);
     const room = activeRoomId();
-    let seg = all.slice(from).filter(e => e.type === 1 && (!CFG.ROOM_ONLY || room == null || e.roomId === room || e.roomId < 0));
-    return seg.slice(-CFG.MAX_ITEMS);
+    S.roomMatch = { room, how: 'all-recent', matched: 0 };
+    if (CFG.ROOM_ONLY && room != null) {
+      const mine = chat.filter(e => e.roomId === room);
+      S.roomMatch.matched = mine.length;
+      if (mine.length) { S.roomMatch.how = 'room-id'; return mine.slice(-CFG.MAX_ITEMS); }
+    }
+    return chat.slice(-CFG.MAX_ITEMS);
   };
 
   // live-kuplien mitattu paikka + oma puskuri
@@ -285,7 +292,14 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
   };
   const getSource = () => {
     const c = loadCache();
-    if (c && c.entries.length) { const entries = roomSegment(c.entries); const img = resolveImages(entries, c.entries); return { kind: 'cache', key: c.key, entries, img, all: c.entries }; }
+    if (c && c.entries.length) {
+      // client tallentaa välimuistin 1 s viiveellä: juuri tulleet live-kuplat puuttuvat siitä vielä.
+      // Lisätään skriptin itse näkemät kuplat, joita ei löydy välimuistin viimeisimmistä riveistä.
+      const lastAt = c.entries.reduce((m, e) => Math.max(m, e.at || 0), 0);
+      const recent = c.entries.slice(-40).map(e => e.name + '|' + plain(e.message));
+      const extra = domBuffer.filter(d => d.at > lastAt - 3000 && !recent.includes(d.name + '|' + plain(d.message)));
+      if (extra.length) c.entries = c.entries.concat(extra);
+      const entries = roomSegment(c.entries); const img = resolveImages(entries, c.entries); return { kind: 'cache', key: c.key, entries, img, all: c.entries }; }
     const entries = domBuffer.slice(-CFG.MAX_ITEMS);
     return { kind: 'dom', key: null, entries, img: resolveImages(entries, domBuffer), all: domBuffer };
   };
@@ -315,7 +329,7 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
   const S = {
     open: false, mode: 'idle', startX: 0, startY: 0, startH: 0, startScroll: 0,
     closeLine: CFG.MIN_H, pinned: true, swallowTail: false,
-    src: null, lastFp: '', xSources: null, imgVerify: null,
+    src: null, lastFp: '', xSources: null, imgVerify: null, roomMatch: null,
     opens: 0, closes: 0, lastCloseReason: '',
   };
   let panel = null, list = null, canvas = null;
@@ -362,6 +376,17 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const cssUrl = u => { if (!u) return ''; return /^url\(/.test(u) ? u : `url("${String(u).replace(/"/g, '%22')}")`; };
 
+  // v0.2.4 (Res: "alasvedon viestit on kapeampia kun nykyset"): DarkUI antaa live-kuplalle inline
+  // max-widthin huoneen chat-asetuksesta (ChatWidgetMessageView.tsx getBubbleWidth: THIN 240 / NORMAL 350 /
+  // WIDE 2000). v0.2.0–0.2.3 kovakoodasi 350 px, joten kapea/leveä-asetuksella historia erosi livestä.
+  // Luetaan se live-kuplasta; ilman live-kuplaa käytetään viimeksi nähtyä.
+  let lastMaxW = '350px';
+  const liveMaxWidth = () => {
+    const b = document.querySelector('.nitro-chat-widget .chat-bubble');
+    const v = b && b.style && b.style.maxWidth;
+    if (v && /^\d+(\.\d+)?px$/.test(v)) lastMaxW = v;
+    return lastMaxW;
+  };
   const bubbleEl = e => {
     const el = document.createElement('div');
     el.className = 'bubble-container visible kch-bubble kch-measure';
@@ -370,7 +395,7 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
     const img = src ? `<div class="user-image" data-src="${esc(src)}" style="background-image:${esc(cssUrl(src))}"></div>` : '';
     el.dataset.name = e.name;
     // name ja message ovat clientin omaa HTML:ää (sama kuin dangerouslySetInnerHTML clientissa)
-    el.innerHTML = `${bg}<div class="chat-bubble ${esc(e.bubbleClass)}" style="max-width:350px"><div class="user-container">${img}</div>` +
+    el.innerHTML = `${bg}<div class="chat-bubble ${esc(e.bubbleClass)}" style="max-width:${liveMaxWidth()}"><div class="user-container">${img}</div>` +
       `<div class="chat-content"><b class="username mr-1">${e.name}: </b><span class="message">${e.message}</span></div><div class="pointer"></div></div>`;
     if (e.time) el.title = e.time.replace('.', ':');
     return el;
@@ -622,7 +647,7 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
   window[NS] = {
     version: VERSION,
     _S: S,
-    _t: { resolveImages: (entries, all) => resolveImages(entries, all || (S.src && S.src.all) || []), verifyImages },
+    _t: { resolveImages: (entries, all) => resolveImages(entries, all || (S.src && S.src.all) || []), verifyImages, roomSegment: all => roomSegment(all).length, roomMatch: () => S.roomMatch, cfg: CFG },
     open: h => open(h, CFG.MIN_H),
     close: () => close('api'),
     destroy,
@@ -633,7 +658,13 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
       for (const e of c.entries) { if (e.type !== 1) continue; const k = e.name; const b = by[k] = by[k] || { n: 0, noImg: 0, kinds: {}, urls: new Set() };
         b.n++; if (!imgOk(e.image)) b.noImg++; const kd = !e.image ? 'none' : urlOf(e.image).slice(0, 5); b.kinds[kd] = (b.kinds[kd] || 0) + 1; if (e.image) b.urls.add(e.image); }
       const me = own(own(RE(), '_sessionDataManager'), '_name') || null;
-      const out = { key: c.key, me, version: VERSION, speakers: {} };
+      const rooms = {}; let lastEnter = null;
+      c.entries.forEach((e, i) => { const k = String(e.roomId); rooms[k] = rooms[k] || { chat: 0, enters: 0 }; if (e.type === 1) rooms[k].chat++; if (e.type === 2) { rooms[k].enters++; lastEnter = { index: i, roomId: e.roomId, rowsAfter: c.entries.length - 1 - i }; } });
+      const seg = roomSegment(c.entries);
+      const fm = sel => { const x = document.querySelector(sel); if (!x) return null; const c2 = getComputedStyle(x); return c2.fontSize + ' ' + c2.fontFamily.split(',')[0] + ' ' + c2.fontWeight; };
+      const bubbleMetrics = { liveMaxWidth: liveMaxWidth(), liveBubbleInlineMaxW: (document.querySelector('.nitro-chat-widget .chat-bubble') || { style: {} }).style.maxWidth || null,
+        liveFont: fm('.nitro-chat-widget .message'), historyFont: fm('#kch-panel .message'), zoom: window.devicePixelRatio, viewport: innerWidth + 'x' + innerHeight };
+      const out = { key: c.key, me, version: VERSION, bubbleMetrics, activeRoomId: activeRoomId(), roomsInCache: rooms, lastRoomEnter: lastEnter, shown: seg.length, roomMatch: S.roomMatch, speakers: {} };
       for (const k in by) { const b = by[k]; const dec = []; for (const u of [...b.urls].slice(-3)) dec.push({ len: u.length, head: urlOf(u).slice(0, 22), decodes: await decodeOk(u) });
         out.speakers[k === me ? k + ' (OMA)' : k] = { n: b.n, noImg: b.noImg, kinds: b.kinds, distinctImgs: b.urls.size, lastImgs: dec }; }
       return out;
@@ -641,7 +672,7 @@ body.kch-active .nitro-chat-widget{opacity:0!important;pointer-events:none!impor
     state: () => ({
       version: VERSION, open: S.open, mode: S.mode, opens: S.opens, closes: S.closes,
       lastCloseReason: S.lastCloseReason, source: S.src ? S.src.kind : null, key: S.src ? S.src.key : null,
-      total: S.src ? S.src.entries.length : null, rendered: canvas ? canvas.querySelectorAll('.kch-bubble').length : 0,
+      total: S.src ? S.src.entries.length : null, roomMatch: S.roomMatch, rendered: canvas ? canvas.querySelectorAll('.kch-bubble').length : 0,
       height: panel ? Math.round(panel.getBoundingClientRect().height) : 0, pinned: S.pinned,
       closeLine: S.closeLine, xSources: S.xSources, img: S.src ? S.src.img : null, imgVerify: S.imgVerify, seen: seen.length, domBuffer: domBuffer.length,
       panelInDom: !!(panel && panel.isConnected), liveHidden: document.body.classList.contains('kch-active'),
