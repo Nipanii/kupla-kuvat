@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.7.0
+// @version      1.8.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -269,9 +269,20 @@
           });
           rivi('Peruuta', 'menu-item list-item').onclick = ev => { ev.stopPropagation(); sulje(); };
           document.body.appendChild(el);
-          const w = el.offsetWidth, hgt = el.offsetHeight;
+          // 1.8.0 Res 23:22 "menu vois aueta cursorin alapuolelle niin että cursor ankkurina yläreuna keskellä": yläpuolelle
+          //   avautuva valikko peitti klikatun kaman. Nyt yläreunan keskikohta kursorissa. Res 23:23 "ei mitään nuolia", kp 23:24
+          //   "osottaa nytki suoraa kursorii, se vaa olis valikon yläreunas" + Res "käy" + kp "robo pidä nuoli" -> pelin kärki
+          //   (:after, 45° neliö, bottom -7px) käännetään yläreunaan osoittamaan ylös kursoriin (225°, top -7px).
+          //   Jos alla ei ole tilaa (ruudun alareuna), vanha tapa: yläpuolelle, kärki alas.
+          if (!document.getElementById('kk-valikko-tyyli')) {
+            const st = document.createElement('style'); st.id = 'kk-valikko-tyyli';
+            st.textContent = '.nitro-context-menu.kk-alas:after{bottom:auto!important;top:-7px;transform:rotate(225deg)!important}';
+            document.head.appendChild(st);
+          }
+          const w = el.offsetWidth, hgt = el.offsetHeight, alas = e.clientY + 10 + hgt <= innerHeight - 4;
+          el.classList.toggle('kk-alas', alas);
           el.style.left = Math.max(4, Math.min(e.clientX - w / 2, innerWidth - w - 4)) + 'px';
-          el.style.top = Math.max(4, Math.min(e.clientY - hgt - 8, innerHeight - hgt - 4)) + 'px';
+          el.style.top = (alas ? e.clientY + 10 : Math.max(4, e.clientY - hgt - 8)) + 'px';
         } catch (err) { VW.__klikkikavelyVirhe = String(err); sulje(); }
       }, true);
       document.addEventListener('mousedown', e => { if (el && !el.contains(e.target)) sulje(); }, true);
