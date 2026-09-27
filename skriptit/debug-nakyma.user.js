@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.5.0
+// @version      1.5.1
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/debug-nakyma.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/debug-nakyma.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -30,7 +30,7 @@
   VW.__kuplaDebugNakyma = true;
 
   const AVAIN = 'kupla.debugNakyma.v1';
-  const OLETUS = { paalla: false, ruudut: true, esineet: true, seina: false, hahmot: true, korkeus: false, vainHiiri: false, sade: 0, pinnalla: true, kaikki: false, kaikkiEsineet: false };
+  const OLETUS = { paalla: false, ruudut: true, esineet: true, seina: false, hahmot: true, korkeus: false, vainHiiri: false, sade: 0, hiiriRuutu: false, pinnalla: true, kaikki: false, kaikkiEsineet: false };
   const VARIT = { ruudut: '#ffff78', hahmot: '#ff8a8a', lattia: '#77ffff', seina: '#ff99ff' };
   let A = Object.assign({}, OLETUS);
   try { Object.assign(A, JSON.parse(localStorage.getItem(AVAIN) || '{}')); } catch (e) {}
@@ -129,7 +129,8 @@
       ctx.strokeStyle = 'rgba(0,0,0,.75)'; ctx.lineWidth = 2.5; ctx.strokeText(t, c.x, c.y); ctx.fillText(t, c.x, c.y); ctx.globalAlpha = 1;
     }
     // hiiren ruudun reunat
-    if (hr) {
+    // kp 00:30 "tarviiko sitä sinistä ruutuu olla ku on pelin oma" -> oletus pois, valinta 'oma hiiriruutu'
+    if (hr && A.hiiriRuutu) {
       const p = [[-.5, -.5], [.5, -.5], [.5, .5], [-.5, .5]].map(([a, b]) => k.piste(hr.x + a, hr.y + b, hr.z));
       if (p.every(Boolean)) { ctx.beginPath(); ctx.moveTo(p[0].x, p[0].y); for (const q of p.slice(1)) ctx.lineTo(q.x, q.y); ctx.closePath(); ctx.strokeStyle = '#0ff'; ctx.lineWidth = 2; ctx.stroke(); }
     }
@@ -235,6 +236,7 @@
   valintaRivi('pinnalla', 'pinon päällä');
   valintaRivi('kaikki', 'myös ei-lattia');
   valintaRivi('vainHiiri', 'vain hiiri');
+  valintaRivi('hiiriRuutu', 'oma hiiriruutu');
   // alueen koko hiiren ympärillä: 0 = vain hiiren ruutu (1×1), 1 = 3×3, 2 = 5×5 … (kp 00:28 "yks ruutu kerrallaa")
   const alue = document.createElement('div'); alue.style.cssText = 'display:flex;align-items:center;gap:4px;white-space:nowrap;';
   const alueTeksti = document.createElement('span');
