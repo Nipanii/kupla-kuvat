@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.6.0
+// @version      1.7.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -240,35 +240,38 @@
           e.preventDefault(); sulje();
           const sade = sadePisteesta(r, roomId, e.clientX, e.clientY), S = saavutettavat(r, roomId);
           VW.__klikkikavelyValikkoSade = sade;
+          // 1.7.0 kp 22:39 "voikko tehä ton right click valikon kopioimalla visuaalisen ilmeen hahmo valikosta … ei mitää omaa
+          //   tyylii": käytetään PELIN OMIA luokkia eikä kopioida arvoja, jolloin ilme seuraa clientin tyyliä jatkossakin.
+          //   ContextMenuView.tsx:77 'nitro-context-menu' (+ 'visible'), ContextMenuHeaderView.tsx:10 'menu-header p-1',
+          //   ContextMenuListItemView.tsx:22 'menu-item list-item' (+ 'disabled'). ContextMenu.scss antaa taustan, reunan,
+          //   oranssin otsikon (#f27f46), rivien hoverin (#ee5a49) ja alareunan kärjen (:after, 45° neliö).
+          //   Kärki osoittaa ALAS keskeltä, joten valikko asetetaan klikkauksen YLÄPUOLELLE ja vaakasuunnassa keskitetysti —
+          //   silloin kärki osoittaa klikattuun kohtaan samoin kuin hahmovalikossa se osoittaa hahmoon.
           el = document.createElement('div');
-          el.style.cssText = 'position:fixed;z-index:2147483647;min-width:170px;background:#1c1c1c;color:#eee;border:1px solid #555;border-radius:4px;'
-            + 'font:12px/1.4 Ubuntu,Arial,sans-serif;box-shadow:0 2px 8px #000a;padding:2px 0;user-select:none';
-          const otsikko = document.createElement('div');
-          otsikko.textContent = 'Kävele'; otsikko.style.cssText = 'padding:3px 10px;color:#f5c542;border-bottom:1px solid #444;font-weight:bold';
-          el.appendChild(otsikko);
-          if (!sade.length) { const d = document.createElement('div'); d.textContent = 'ei pintaa tässä'; d.style.cssText = 'padding:4px 10px;color:#888'; el.appendChild(d); }
+          el.className = 'nitro-context-menu visible';
+          el.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:all;user-select:none';
+          const rivi = (teksti, luokat, vihje) => {
+            const d = document.createElement('div');
+            d.className = luokat + ' d-flex justify-content-center align-items-center';
+            d.textContent = teksti; if (vihje) d.title = vihje;
+            el.appendChild(d); return d;
+          };
+          rivi('Kävele', 'menu-header p-1');
+          if (!sade.length) rivi('ei pintaa tässä', 'menu-item list-item disabled');
           sade.forEach((q, n) => {
             const paasee = !S || S.on(q.x, q.y), nimi = q.h <= q.lattia + 0.01 ? 'Lattialle' : n === 0 ? 'Päälle' : 'Taakse';
-            const d = document.createElement('div');
-            d.textContent = `${nimi} · korkeus ${+q.h.toFixed(2)}${paasee ? '' : ' (ei pääsyä)'}`;
-            d.title = `ruutu ${q.x},${q.y}`;
-            d.style.cssText = 'padding:4px 10px;cursor:' + (paasee ? 'pointer' : 'default') + ';color:' + (paasee ? '#eee' : '#777');
+            const d = rivi(`${nimi} · ${+q.h.toFixed(2)}${paasee ? '' : ' (ei pääsyä)'}`,
+              'menu-item list-item' + (paasee ? '' : ' disabled'), `ruutu ${q.x},${q.y}`);
             if (paasee) {
-              d.onmouseenter = () => { d.style.background = '#3a5f8a'; };
-              d.onmouseleave = () => { d.style.background = ''; };
               d.onmousedown = ev => { ev.stopPropagation(); ev.preventDefault(); };
               d.onclick = ev => { ev.stopPropagation(); hh.sendWalkUpdate(q.x, q.y); VW.__klikkikavelyViime = { kohde: q, tapa: 'valikko', lista: sade, t: Date.now() }; sulje(); };
             }
-            el.appendChild(d);
           });
-          const peruuta = document.createElement('div');
-          peruuta.textContent = 'Peruuta'; peruuta.style.cssText = 'padding:4px 10px;cursor:pointer;color:#aaa;border-top:1px solid #444';
-          peruuta.onclick = ev => { ev.stopPropagation(); sulje(); };
-          el.appendChild(peruuta);
+          rivi('Peruuta', 'menu-item list-item').onclick = ev => { ev.stopPropagation(); sulje(); };
           document.body.appendChild(el);
           const w = el.offsetWidth, hgt = el.offsetHeight;
-          el.style.left = Math.min(e.clientX, innerWidth - w - 4) + 'px';
-          el.style.top = Math.min(e.clientY, innerHeight - hgt - 4) + 'px';
+          el.style.left = Math.max(4, Math.min(e.clientX - w / 2, innerWidth - w - 4)) + 'px';
+          el.style.top = Math.max(4, Math.min(e.clientY - hgt - 8, innerHeight - hgt - 4)) + 'px';
         } catch (err) { VW.__klikkikavelyVirhe = String(err); sulje(); }
       }, true);
       document.addEventListener('mousedown', e => { if (el && !el.contains(e.target)) sulje(); }, true);
