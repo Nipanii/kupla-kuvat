@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.0.0
+// @version      1.1.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/huonekierto.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/huonekierto.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -162,9 +162,12 @@
   let paneeli = null, kulmaTeksti = null;
   function paivitaPaneeli() { if (kulmaTeksti) kulmaTeksti.textContent = tila.kulma + '°'; }
   function nappi(teksti, otsikko, fn) {
-    const b = document.createElement('button');
+    // 1.1.0 kp 23:15 "siisti" + "mis huonekierto gui" (tumma laatikko hukkui oikeaan palkkiin): pelin oman valikon luokat
+    // (DarkUI ContextMenu.scss: .menu-item.list-item = tumma rivi, hover #ee5a49; .menu-header = oranssi #f27f46)
+    const b = document.createElement('div');
+    b.className = 'menu-item list-item d-flex justify-content-center align-items-center';
     b.textContent = teksti; b.title = otsikko;
-    b.style.cssText = 'background:#2b2b2b;color:#eee;border:1px solid #555;border-radius:3px;padding:2px 7px;margin:0 2px;cursor:pointer;font:14px Ubuntu,Arial,sans-serif';
+    b.style.cssText = 'min-width:30px;margin:2px 2px 0;font-size:16px';
     b.onmousedown = e => e.stopPropagation();
     b.onclick = e => { e.stopPropagation(); fn(); };
     return b;
@@ -172,13 +175,20 @@
   function teePaneeli() {
     if (paneeli || !document.body) return;
     paneeli = document.createElement('div');
-    paneeli.style.cssText = 'position:fixed;right:12px;bottom:140px;z-index:2147483646;background:#1c1c1ccc;color:#eee;border:1px solid #555;'
-      + 'border-radius:5px;padding:4px 6px;font:12px Ubuntu,Arial,sans-serif;user-select:none;display:none;align-items:center';
+    paneeli.id = 'kupla-huonekierto';
+    paneeli.className = 'nitro-context-menu';
+    paneeli.style.cssText = 'position:fixed;right:12px;bottom:140px;z-index:2147483646;user-select:none;display:none;flex-direction:column;color:#fff';
     paneeli.title = 'Huonekierto (vain oma näkymä). Käännettynä seinät piilossa. Chat: :kierrä [vasen|oikea|180|pois]';
-    const kahva = document.createElement('span'); kahva.textContent = '📷'; kahva.style.cssText = 'cursor:move;margin-right:4px';
-    kulmaTeksti = document.createElement('span'); kulmaTeksti.style.cssText = 'display:inline-block;min-width:34px;text-align:center';
-    paneeli.append(kahva, nappi('⟲', 'käännä vasemmalle 90°', () => aseta(tila.kulma - 90)), kulmaTeksti,
+    // valikon alareunan nuoli (:after) kuuluu hahmovalikolle, ei irralliselle paneelille
+    const css = document.createElement('style'); css.textContent = '#kupla-huonekierto:after{display:none!important}';
+    document.head.appendChild(css);
+    const kahva = document.createElement('div'); kahva.textContent = '📷 Kierto';
+    kahva.className = 'menu-header d-flex justify-content-center align-items-center'; kahva.style.cssText = 'cursor:move;margin-bottom:2px';
+    kulmaTeksti = document.createElement('span'); kulmaTeksti.style.cssText = 'display:inline-block;min-width:36px;text-align:center;font-size:14px';
+    const rivi = document.createElement('div'); rivi.style.cssText = 'display:flex;align-items:center';
+    rivi.append(nappi('⟲', 'käännä vasemmalle 90°', () => aseta(tila.kulma - 90)), kulmaTeksti,
       nappi('⟳', 'käännä oikealle 90°', () => aseta(tila.kulma + 90)), nappi('↺', 'takaisin oletukseen', () => aseta(0)));
+    paneeli.append(kahva, rivi);
     // raahaus kahvasta
     kahva.onmousedown = e => {
       e.preventDefault(); e.stopPropagation();
