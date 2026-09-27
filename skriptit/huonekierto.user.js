@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.2.0
+// @version      1.3.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/huonekierto.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/huonekierto.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -79,6 +79,23 @@
     v._visiblePlanes = []; v._visiblePlaneSpriteNumbers = [];
   }
 
+  // Seinäesineet piiloon käännettynä (kp 2026-09-28 00:22 "wallitemit vähä glitchaa jos koittaa kattoo takaa · pitäis
+  // piilottaa jos mahdoton angle, koska törröttää vääräs kulmas"). Seinät ovat jo piilossa kaikissa käännetyissä kulmissa,
+  // joten seinäesine (kategoria 20) jäisi leijumaan. Vipu = mallin furniture_alpha_multiplier (visualisaatio lukee sen
+  // mallipäivityksessä; vain initialize asettaa 1). Palautetaan alkuperäinen arvo oletusnäkymässä.
+  function seinaesineet(c, piiloon) {
+    const muisti = tila.seinaesineet || (tila.seinaesineet = new Map());
+    const elossa = new Set();
+    for (const o of c.r.getRoomInstance(c.rid).getRoomObjectsForCategory(20)) {
+      elossa.add(o.id); const m = o.model; if (!m) continue;
+      if (piiloon) {
+        if (!muisti.has(o.id)) muisti.set(o.id, m.getValue('furniture_alpha_multiplier'));
+        if (m.getValue('furniture_alpha_multiplier') !== 0) m.setValue('furniture_alpha_multiplier', 0);
+      } else if (muisti.has(o.id)) { const a = muisti.get(o.id); m.setValue('furniture_alpha_multiplier', a == null ? 1 : a); }
+    }
+    if (!piiloon) muisti.clear(); else for (const id of [...muisti.keys()]) if (!elossa.has(id)) muisti.delete(id);
+  }
+
   // Moniruutuisten sijainti käännetyssä näkymässä (nako.expr:41-53). Palvelimen päivitys tunnistetaan siitä, ettei sijainti
   // ole enää se jonka ME asetimme -> se on uusi alkuperäinen.
   function siirrot(c) {
@@ -144,14 +161,14 @@
         g.direction = new V(a.d0.x, a.d0.y, a.d0.z); g.setDepthVector(new V(a.d0.x, a.d0.y, 5));
         g.location = new V(a.l0.x, a.l0.y, a.l0.z); cv._effectDirection = a.e0 || new V(a.d0.x, a.d0.y, a.d0.z);
       }
-      tila.kulma = 0; siirrot(c); seinat(c, true); tila.alku = null;
+      tila.kulma = 0; siirrot(c); seinat(c, true); seinaesineet(c, false); tila.alku = null;
     } else {
       const a = tila.alku, dx = a.d0.x + kulma, dy = a.d0.y;
       g.direction = new V(dx, dy, a.d0.z); g.setDepthVector(new V(dx, dy, 5)); cv._effectDirection = new V(dx, dy, a.d0.z);
       g.location = new V(a.o.x + a.L * Math.cos(rad(dx + 180)) * Math.cos(rad(dy)),
                          a.o.y + a.L * Math.sin(rad(dx + 180)) * Math.cos(rad(dy)),
                          a.o.z + a.L * Math.sin(rad(dy)));
-      tila.kulma = kulma; siirrot(c); seinat(c, false);
+      tila.kulma = kulma; siirrot(c); seinat(c, false); seinaesineet(c, true);
     }
     pidaKeskella(c, keski);
     paivitaPaneeli();
@@ -254,7 +271,7 @@
       if (tila.kulma) {
         // doMagic ei pyyhi, mutta varmistetaan että joku muu (esim. :rotate) ei jättänyt kameraa muualle
         const dx = tila.alku.d0.x + tila.kulma;
-        if (Math.abs(c.g.direction.x - dx) > 0.01) aseta(tila.kulma, true); else siirrot(c);
+        if (Math.abs(c.g.direction.x - dx) > 0.01) aseta(tila.kulma, true); else { siirrot(c); seinaesineet(c, true); }
       }
     } catch (err) { VW.__huonekiertoVirhe = String(err && err.stack || err); }
   }, 400);
