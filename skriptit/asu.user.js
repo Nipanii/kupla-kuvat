@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.1.0
+// @version      1.1.1
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/asu.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/asu.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -41,7 +41,7 @@
   function pue(figure, gender) {
     const { c } = yhteys(); if (!c) return 'ei yhteyttä peliin';
     const map = dv(dv(c, '_messages'), '_messageIdByComposer'); let C = null;
-    if (map) for (const [k, v] of map) if (v === 2730) C = k;
+    if (map) for (const [k, v] of map) if (v === 2730 && !C) C = k;   // ENSIMMÄINEN = pelin oma; m.js/t.js/k.js/e.js lisäävät oman kiinteän 2730-luokan perään
     if (!C) return 'asunvaihtoviestiä ei löytynyt';
     c.send(new C(gender, figure)); return 'ok';
   }
