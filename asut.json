@@ -1,6 +1,15 @@
 {
-  "uusin": "täti",
+  "uusin": "touko",
   "asut": {
-    "täti": { "figure": "hr-3273-40.hd-600-1.ch-225-76.cc-3572-1408.lg-3006-82.sh-3089-82.ea-3727", "gender": "F", "kuvaus": "ruokalan täti" }
+    "täti": {
+      "figure": "hr-3273-40.hd-600-1.ch-225-76.cc-3572-1408.lg-3006-82.sh-3089-82.ea-3727",
+      "gender": "F",
+      "kuvaus": "ruokalan täti"
+    },
+    "touko": {
+      "figure": "hd-180-1.hr-3357-31.ha-3494-73.ch-3527-1408.cc-3374-1189.lg-3328-82.sh-290-1189.ca-5936-66",
+      "gender": "M",
+      "kuvaus": "Touko, koulukiusaaja"
+    }
   }
 }
