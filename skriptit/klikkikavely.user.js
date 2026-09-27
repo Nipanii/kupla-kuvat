@@ -1,0 +1,140 @@
+// ==UserScript==
+// @name         Kupla Klikkikävely
+// @namespace    https://re-lab.local/kupla
+// @match        https://kupla.cc/*
+// @run-at       document-idle
+// @grant        none
+// @version      1.1.0
+// @description  Klikkaus korotetulle pinnalle (palikkalattia, lentokone) kävelyttää sinne eikä maahan pinnan takana. Pinta valitaan pinokorkeuskartasta: hiiren alla lähimpänä kameraa oleva ruudun päällys. Lähettää saman kävelypaketin kuin peli itse.
+// @kupla-oletus on
+// @author       re-lab
+// ==/UserScript==
+//
+// kp 2026-09-27 18:40: "jos tekee korkealle esim sen lentokoneen, lentokoneen lattian painaminen ei ohjaa hahmoa sinne".
+//
+// SYY (lähde D:/kupla-lahde/kupla-cc/client/Nitro_Render_V3/packages/room/src/RoomObjectEventHandler.ts):
+//   esineen klikkaus -> handleMoveTargetFurni -> getActiveSurfaceLocation, joka palauttaa null jos furnidatassa
+//   EI ole canStandOn/canSitOn/canLayOn. Kuplan FurnitureData.json:ssa ne ovat lähes kaikki false -> ei kävelyä.
+//   Mitattu 2026-09-27 19:05 huone 357: klikkaus lavan päälle (21,17 korkeus 3) -> 0 kävelypakettia; kontrolli
+//   lattiaruutuun 16,21 -> "Nm [16,21]" ja robo liikkui.
+// KORJAUS: jos pelin oma polku ei kävelytä, lasketaan SAMA pintaruutu kuin pelin getActiveSurfaceLocation mutta ilman
+//   lippuporttia, ja kävelytetään vain jos palvelimen korkeuskartta ei sano ruutua estetyksi (<40).
+//   Estetty = Daybreak RoomTile.relativeHeight():88-95 -> 64*256 kun ruutu BLOCKED/SIT eikä pinottava (kasvi, tuoli
+//   ilman pinoa, ovi) -> ei muutosta, klikkaus vain valitsee kuten ennen. Kattaa myös lattiatason matot (samat false-liput).
+//   RAJA: pinottava mutta ei-käveltävä (pöytä: BLOCKED + allowStack) näkyy kartassa pöydän korkeutena -> lähtee
+//   kävelypyyntö jonka palvelimen reitinhaku ratkaisee; client ei erota sitä palikasta.
+//   🔴 KORJAUS 2026-09-27 20:50 (negatiivinen kontrolli, kasvi plant_bulrush 216930 @14,21, huone 357): "estetty = 64*256"
+//   EI PIDÄ kuplassa — clientin pinokartta näyttää kasviruudulle 0.398 eikä _isNotStackable ole päällä, joten klikkaus
+//   kasviin LÄHETTI "Nm [14,21]". Palvelin hylkäsi: robo pysyi 18,20. Eli portti ei estä mitään mitä client ei näe;
+//   käytännössä: klikkaus esteeseen = yksi palvelimen hylkäämä kävelypyyntö, ei liikettä (sama kuin pöytä-raja).
+//   Client ei voi erottaa estettyä ruutua: tieto on vain palvelimella. Positiivinen kontrolli (lava 21,17 -> z 3) ✅ samalla ajolla.
+//   Hylätty 1. versio: pinokartan "kylkipylväät" -- ruutu 23,19 korkeus 63.996 peitti lavan (mitattu 19:20).
+(function () {
+  'use strict';
+  const VW = (typeof unsafeWindow !== 'undefined' && unsafeWindow) || window;
+  if (VW.__kuplaKlikkikavely) return;
+
+  const RE = () => VW.NitroDevTools && VW.NitroDevTools.roomEngine;
+  const ESTETTY = 40; // palvelimen pinoraja (SetCustomStackingHeight clamp 40); 63.996 = "ei pinota/kävellä" -merkki
+
+  // Pelin oma getActiveSurfaceLocation (RoomObjectEventHandler.ts:1631) ILMAN furnidata-lippuporttia, canSitOn=false:
+  // klikatun esineen jalanjäljestä se ruutu jonka päällystä klikattiin. null = kylki tai jalanjäljen ulkopuolella.
+  function pintaRuutu(r, roomId, event) {
+    const o = r.getRoomObject(roomId, event.objectId, 10); if (!o || !o.model) return null; // 10 = RoomObjectCategory.FLOOR
+    const loc = o.getLocation(), dir = o.getDirection();
+    let sx = o.model.getValue('furniture_size_x'), sy = o.model.getValue('furniture_size_y'); const sz = o.model.getValue('furniture_size_z');
+    if (dir.x === 90 || dir.x === 270) [sx, sy] = [sy, sx];
+    if (!(sx >= 1)) sx = 1; if (!(sy >= 1)) sy = 1;
+    const cv = r.getActiveRoomInstanceRenderingCanvas(); if (!cv) return null;
+    const scale = cv.geometry.scale;
+    const offX = ((scale / 2) + event.spriteOffsetX + event.localX) / (scale / 4);
+    const offY = (event.spriteOffsetY + event.localY + (sz * scale) / 2) / (scale / 4);
+    const tx = Math.floor(loc.x + (offX + 2 * offY) / 4), ty = Math.floor(loc.y - (offX - 2 * offY) / 4 + 1);
+    if (tx < loc.x || tx >= loc.x + sx || ty < loc.y || ty >= loc.y + sy) return null;
+    return { x: tx, y: ty, esine: event.objectId, esineZ: loc.z, kokoZ: sz };
+  }
+
+  // palvelimen korkeuskartan mukaan: korotettu, ei estetty -> sinne voi yrittää kävellä
+  function kaveltava(r, roomId, x, y) {
+    const sm = r.getFurnitureStackingHeightMap(roomId), lw = r.getLegacyWallGeometry(roomId); if (!sm || !lw) return null;
+    const h = sm.getTileHeight(x, y), lattia = lw.getHeight(x, y) || 0;
+    const esto = sm._isNotStackable ? sm._isNotStackable[y * sm.width + x] : false;
+    return { h, lattia, ok: lw.isRoomTile(x, y) && !esto && h < ESTETTY };
+  }
+
+  // 1.1.0 kp 2026-09-27 21:33: "jos painaisin nyt tota etuseinää joka peittää nii script tunnistaa et se on liian korkee mut
+  //   takana on valid ruutu ja valitsee sen takaata". Seinä joka peittää sisätilan (lentokoneen kylki) on joko kylki (pintaRuutu
+  //   null) tai päällys johon ei pääse (seinän harja 3 korkeampi kuin kumpikaan puoli). Molemmissa: säde hiiren alta TAAKSE
+  //   korkeuskartan läpi, ja ensimmäinen ruutu jonka päällyksen säde leikkaa JA johon oma hahmo pääsee kävellen.
+  const ASKEL = 1.1; // Daybreak PluginManager.java:104 pathfinder.step.maximum.height 1.1; :105 allow.falling true (pudotus ok)
+  const dv = (o, k) => { const d = o && Object.getOwnPropertyDescriptor(o, k); return d && !d.get ? d.value : undefined; };
+
+  // Säde: korkeudella H sama näyttöpiste on ruudussa (x-t, y-t) kun H laskee t:llä (Nitro: sx=(x-y)*32, sy=(x+y)*16-z*32).
+  // Palauttaa ruudut joiden PÄÄLLYKSEN säde ylittää (ei kylkiä), edestä taakse.
+  function sadePinnat(r, roomId, event) {
+    const o = r.getRoomObject(roomId, event.objectId, 10); if (!o) return [];
+    const loc = o.getLocation(), cv = r.getActiveRoomInstanceRenderingCanvas(); if (!cv) return [];
+    const sm = r.getFurnitureStackingHeightMap(roomId), lw = r.getLegacyWallGeometry(roomId); if (!sm || !lw) return [];
+    const scale = cv.geometry.scale, offX = ((scale / 2) + event.spriteOffsetX + event.localX) / (scale / 4);
+    const offY0 = (event.spriteOffsetY + event.localY) / (scale / 4);
+    let maxH = 0; for (let y = 0; y < sm.height; y++) for (let x = 0; x < sm.width; x++) { const h = sm.getTileHeight(x, y); if (h < ESTETTY && h > maxH) maxH = h; }
+    const osumat = []; let ed = null;
+    for (let H = maxH + 1; H >= -0.5; H -= 0.02) {
+      const offY = offY0 + 2 * (H - loc.z), x = Math.floor(loc.x + (offX + 2 * offY) / 4), y = Math.floor(loc.y - (offX - 2 * offY) / 4 + 1);
+      if (x < 0 || y < 0 || x >= sm.width || y >= sm.height || !lw.isRoomTile(x, y)) { ed = null; continue; }
+      const top = sm.getTileHeight(x, y);
+      if (ed && ed.x === x && ed.y === y && ed.H > top && H <= top) osumat.push({ x, y, h: top });
+      ed = { x, y, H };
+    }
+    return osumat;
+  }
+
+  // Ruudut joihin oma hahmo pääsee: BFS 8 suuntaan, nousu ≤ ASKEL, pudotus sallittu. Yliarvio (kulmasäännöt, estetyt esineet
+  // joita client ei näe) -> pahimmillaan sama kuin ennen: palvelin hylkää. null = omaa hahmoa ei löydy -> vanha käytös.
+  function saavutettavat(r, roomId) {
+    const sm = r.getFurnitureStackingHeightMap(roomId), lw = r.getLegacyWallGeometry(roomId); if (!sm || !lw) return null;
+    const rsm = dv(r, '_roomSessionManager'), ss = rsm && dv(rsm, '_sessions'); let own = null;
+    if (ss instanceof Map) for (const [, v] of ss) if (dv(v, '_roomId') === roomId) own = dv(v, '_ownRoomIndex');
+    const u = own != null && r.getRoomObject(roomId, own, 100); if (!u) return null; // 100 = RoomObjectCategory.UNIT
+    const l = u.getLocation(), W = sm.width, Hh = sm.height, sx = Math.round(l.x), sy = Math.round(l.y);
+    if (sx < 0 || sy < 0 || sx >= W || sy >= Hh) return null;
+    const vapaa = (x, y) => lw.isRoomTile(x, y) && !(sm._isNotStackable && sm._isNotStackable[y * W + x]) && sm.getTileHeight(x, y) < ESTETTY;
+    const nahty = new Uint8Array(W * Hh), jono = [[sx, sy, l.z]]; nahty[sy * W + sx] = 1; // lähtö hahmon z:sta (istuessa tuolin ruutu on estetty)
+    while (jono.length) {
+      const [x, y, h] = jono.shift();
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+        const nx = x + dx, ny = y + dy; if ((!dx && !dy) || nx < 0 || ny < 0 || nx >= W || ny >= Hh || nahty[ny * W + nx] || !vapaa(nx, ny)) continue;
+        const nh = sm.getTileHeight(nx, ny); if (nh - h > ASKEL) continue;
+        nahty[ny * W + nx] = 1; jono.push([nx, ny, nh]);
+      }
+    }
+    return { on: (x, y) => !!nahty[y * W + x] };
+  }
+
+  function kiinnita() {
+    const r = RE(); if (!r || !r._roomObjectEventHandler) return false;
+    const h = r._roomObjectEventHandler;
+    if (h.__klikkikavely) return true;
+    const furniOrig = h.handleMoveTargetFurni;
+    h.handleMoveTargetFurni = function (roomId, event) {
+      const tulos = furniOrig.apply(this, arguments);
+      if (tulos || this._roomEngine.moveBlocked) return tulos;
+      try {
+        const re = this._roomEngine, p = pintaRuutu(re, roomId, event), k = p && kaveltava(re, roomId, p.x, p.y);
+        let kohde = p && k && k.ok ? p : null, tapa = 'pinta';
+        const S = saavutettavat(re, roomId);
+        if (S && (!kohde || !S.on(kohde.x, kohde.y))) {           // kylki tai päällys johon ei pääse -> katso taakse
+          const taakse = sadePinnat(re, roomId, event).find(q => S.on(q.x, q.y));
+          if (taakse) { kohde = taakse; tapa = 'säde'; }
+        }
+        VW.__klikkikavelyViime = { p, k, kohde, tapa };
+        if (!kohde) return tulos;
+        this.sendWalkUpdate(kohde.x, kohde.y);
+        return true;
+      } catch (e) { VW.__klikkikavelyVirhe = String(e); return tulos; }
+    };
+    h.__klikkikavely = true; VW.__kuplaKlikkikavely = true;
+    return true;
+  }
+  let yrit = 0; const t = setInterval(() => { if (kiinnita() || ++yrit > 240) clearInterval(t); }, 500);
+})();
