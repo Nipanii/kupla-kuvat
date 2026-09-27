@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.9.0
+// @version      1.9.1
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -54,7 +54,7 @@
     const vj = VW.kuplaValikkoJono = VW.kuplaValikkoJono || [];
     for (const x of vj.splice(0)) lisaaRivi(x);
     vj.push = (...xs) => { xs.forEach(lisaaRivi); return 0; };
-    VW.kuplaValikko = { __versio: '1.9.0', lisaa: lisaaRivi, rivit: () => valikkoRivit.slice() };
+    VW.kuplaValikko = { __versio: '1.9.1', lisaa: lisaaRivi, rivit: () => valikkoRivit.slice() };
   }
 
   // Hahmo kursorin alla: hahmon sprite-laatikko (sama getRoomObjectBoundingRectangle kuin debug-näkymässä), useammasta
@@ -220,6 +220,30 @@
     //   kursori leijui esineen z:n verran liian korkealla, ja säteen takaruudussa vielä väärän esineen z:n päällä.
     //   Korjaus: kun pinta tulee tältä skriptiltä, handleMouseOverObject rakentaa viestin uudestaan muodossa
     //   (x, y, ABSOLUUTTINEN korkeus), height 0 = sama muoto kuin lattiaruudun kursori (handleMouseOverTile :1686).
+    // 🔴 1.9.1 kp 2026-09-28 (#598/#600/#601) "porras palikois ei näy", "jää niiden sisää ?" + "mut muista et se natiivi ois preferred":
+    //   1.5.1:n muoto (x, y, ABSOLUUTTINEN z) height 0 ei ole natiivi. Natiivi handleMouseOverObject rakentaa
+    //   (x, y, PINNAN ANTAVAN ESINEEN z) + height = pinta − se z, ja TileCursorVisualization nostaa vain kerroksen 1
+    //   height*32 px (live-nitro-renderer-c3005467 class Qwe). Nyt samoin: POHJA = ruudun tile-mapin ylin esine
+    //   (getRoomTileObjectMap().getObjectIntTile(x,y), sama jota natiivi handleMouseOverTile käyttää; addRoomObject pitää
+    //   siellä korkeimman z:n esineen) — säteen takaruudussa siis SEN ruudun esine, ei hiiren alla olevan (1.5.1:n virhe).
+    //   Ei esinettä tai sen z pinnan yläpuolella -> pohja = lattia (lw.getHeight), kuten natiivin vaihtuvakorkeushaara.
+    //   Ensin kuitenkin HIIREN ALLA oleva esine, jos juuri se antaa pinnan (ruutu sen jalanjäljessä, z+sizeZ = pinta): se on
+    //   täsmälleen natiivin muoto. Mitattu robolla 2026-09-28 (huone 395, tmp/kk191-testi-tee.js): ilman tätä 26 palikkaa joiden päällä litteä tuoli (z5, sizeZ≈0)
+    //   saivat pohjaksi tuolin (5, height 0 = tila 0) kun natiivi antaa palikan (4, height 1 = tila 6).
+    function kursoriPohja(re, roomId, x, y, pinta, hiirenEsine) {
+      try {
+        const l = hiirenEsine && hiirenEsine.getLocation(), m = hiirenEsine && hiirenEsine.model, d = hiirenEsine && hiirenEsine.getDirection();
+        if (l && m) {
+          let sx = m.getValue('furniture_size_x'), sy = m.getValue('furniture_size_y'); const sz = m.getValue('furniture_size_z') || 0;
+          if (d && (d.x === 90 || d.x === 270)) [sx, sy] = [sy, sx]; if (!(sx >= 1)) sx = 1; if (!(sy >= 1)) sy = 1;
+          if (x >= l.x && x < l.x + sx && y >= l.y && y < l.y + sy && Math.abs(l.z + sz - pinta) < 1e-3) return l.z;
+        }
+      } catch (e) { /* pudotaan tile-mappiin */ }
+      const lw = re.getLegacyWallGeometry(roomId), lattia = (lw && lw.getHeight(x, y)) || 0;
+      const tm = typeof re.getRoomTileObjectMap === 'function' ? re.getRoomTileObjectMap(roomId) : null;
+      const o = tm && tm.getObjectIntTile(x, y), z = o && o.getLocation ? o.getLocation().z : null;
+      return (typeof z === 'number' && z <= pinta + 1e-6) ? z : Math.min(lattia, pinta);
+    }
     const pintaOrig = h.getActiveSurfaceLocation;
     let kursoriKohde = null;
     if (typeof pintaOrig === 'function') h.getActiveSurfaceLocation = function (roomObject, event) {
@@ -238,7 +262,7 @@
       kursoriKohde = null;
       const msg = yliOrig.apply(this, arguments), k = kursoriKohde; kursoriKohde = null;
       if (!msg || !k) return msg;                     // pelin oma pinta tai ei pintaa: ennallaan
-      try { return new msg.constructor(new k.V(k.x, k.y, k.h), 0, true, event.eventId); }
+      try { const b = kursoriPohja(this._roomEngine, roomId, k.x, k.y, k.h, this._roomEngine.getRoomObject(roomId, event.objectId, 10)); return new msg.constructor(new k.V(k.x, k.y, b), k.h - b, true, event.eventId); }
       catch (e) { VW.__klikkikavelyVirhe = String(e); return msg; }
     };
     const furniOrig = h.handleMoveTargetFurni;
