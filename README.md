@@ -11,3 +11,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/poke-koko-konsepti.png` — Pokemon-koot: nyt vs lore accurate (avatar 1,7 m), Resin pyynnöstä 27.9.
 - `kuvat/poke-koko-konsepti-v2.png` — Pokemon-koot v2: nyt / lore accurate / neliöjuurikompromissi
 - `kuvat/poke-koko-konsepti-v3.png` — Pokemon-koot v3: kokonaiskertoimet 1x/2x/3x nearest
+- `kuvat/poke-koko-konsepti-v4.png` — Pokemon-koot v4: ei suurennusta, isoin natiivina
