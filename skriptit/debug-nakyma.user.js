@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.5.1
+// @version      1.5.2
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/debug-nakyma.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/debug-nakyma.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -30,7 +30,7 @@
   VW.__kuplaDebugNakyma = true;
 
   const AVAIN = 'kupla.debugNakyma.v1';
-  const OLETUS = { paalla: false, ruudut: true, esineet: true, seina: false, hahmot: true, korkeus: false, vainHiiri: false, sade: 0, hiiriRuutu: false, pinnalla: true, kaikki: false, kaikkiEsineet: false };
+  const OLETUS = { paalla: false, ruudut: true, esineet: true, seina: false, hahmot: true, korkeus: false, vainHiiri: false, sade: 0, hiiriRuutu: false, pintaRuutu: true, pinnalla: true, kaikki: false, kaikkiEsineet: false };
   const VARIT = { ruudut: '#ffff78', hahmot: '#ff8a8a', lattia: '#77ffff', seina: '#ff99ff' };
   let A = Object.assign({}, OLETUS);
   try { Object.assign(A, JSON.parse(localStorage.getItem(AVAIN) || '{}')); } catch (e) {}
@@ -72,9 +72,9 @@
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
       const on = lw.isRoomTile(x, y); if (on) lattiaa++;
       if (!on && !A.kaikki) continue;
-      let z = on ? (lw.getHeight(x, y) || 0) : 0;
+      let z = on ? (lw.getHeight(x, y) || 0) : 0; const lz = z;
       if (A.pinnalla && sm) { const t = sm.getTileHeight(x, y); if (t > z) z = t; }
-      lista.push([x, y, z, on]);
+      lista.push([x, y, z, on, lz]);
     }
     return { lista, w, h, lattiaa };
   }
@@ -82,13 +82,13 @@
   // hiiren ruutu: lähin ruutu jonka vinoneliön sisällä hiiri on (toimii myös käännetyllä kameralla)
   function hiirenRuutu(k, rl) {
     if (!hiiri) return null; let paras = null;
-    for (const [x, y, z] of rl) {
+    for (const [x, y, z, , lz] of rl) {
       const c = k.piste(x, y, z); if (!c) continue;
       const a = k.piste(x + 0.5, y, z), b = k.piste(x, y + 0.5, z); if (!a || !b) continue;
       // hiiren sijainti ruudun omassa (x,y)-kannassa
       const ax = a.x - c.x, ay = a.y - c.y, bx = b.x - c.x, by = b.y - c.y, det = ax * by - ay * bx; if (!det) continue;
       const dx = hiiri.x - c.x, dy = hiiri.y - c.y, u = (dx * by - dy * bx) / det, v = (ax * dy - ay * dx) / det;
-      if (Math.abs(u) <= 1 && Math.abs(v) <= 1) { const m = Math.max(Math.abs(u), Math.abs(v)) - z * 0.001; if (!paras || m < paras.m || z > paras.z) paras = { x, y, z, m }; }
+      if (Math.abs(u) <= 1 && Math.abs(v) <= 1) { const m = Math.max(Math.abs(u), Math.abs(v)) - z * 0.001; if (!paras || m < paras.m || z > paras.z) paras = { x, y, z, m, lz: lz || 0 }; }
     }
     return paras;
   }
@@ -129,8 +129,10 @@
       ctx.strokeStyle = 'rgba(0,0,0,.75)'; ctx.lineWidth = 2.5; ctx.strokeText(t, c.x, c.y); ctx.fillText(t, c.x, c.y); ctx.globalAlpha = 1;
     }
     // hiiren ruudun reunat
-    // kp 00:30 "tarviiko sitä sinistä ruutuu olla ku on pelin oma" -> oletus pois, valinta 'oma hiiriruutu'
-    if (hr && A.hiiriRuutu) {
+    // kp 00:30 "tarviiko sitä sinistä ruutuu olla ku on pelin oma" -> oletus pois. kp 00:43 "ei näy ruutuu palikoiden pääl
+    // … paitsi lattial": pelin oma kursori näkyy vain lattialla -> 'pintaRuutu' (oletus päällä) piirtää vain kun hiiri on
+    // kalusteen/palikan päällä (pinta > lattia); 'hiiriRuutu' piirtää aina, myös lattialla.
+    if (hr && (A.hiiriRuutu || (A.pintaRuutu && hr.z > hr.lz + 0.01))) {
       const p = [[-.5, -.5], [.5, -.5], [.5, .5], [-.5, .5]].map(([a, b]) => k.piste(hr.x + a, hr.y + b, hr.z));
       if (p.every(Boolean)) { ctx.beginPath(); ctx.moveTo(p[0].x, p[0].y); for (const q of p.slice(1)) ctx.lineTo(q.x, q.y); ctx.closePath(); ctx.strokeStyle = '#0ff'; ctx.lineWidth = 2; ctx.stroke(); }
     }
@@ -236,7 +238,8 @@
   valintaRivi('pinnalla', 'pinon päällä');
   valintaRivi('kaikki', 'myös ei-lattia');
   valintaRivi('vainHiiri', 'vain hiiri');
-  valintaRivi('hiiriRuutu', 'oma hiiriruutu');
+  valintaRivi('pintaRuutu', 'oma ruutu pinnoilla');
+  valintaRivi('hiiriRuutu', 'oma ruutu myös lattialla');
   // alueen koko hiiren ympärillä: 0 = vain hiiren ruutu (1×1), 1 = 3×3, 2 = 5×5 … (kp 00:28 "yks ruutu kerrallaa")
   const alue = document.createElement('div'); alue.style.cssText = 'display:flex;align-items:center;gap:4px;white-space:nowrap;';
   const alueTeksti = document.createElement('span');
