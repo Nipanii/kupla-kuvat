@@ -4,11 +4,11 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.3.0
+// @version      1.4.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/huonekierto.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/huonekierto.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
-// @description  Kääntää OMAA kameraa huoneen ympäri 90° askelin: paneeli ⟲ ⟳ ↺ ja chat-komento :kierrä [vasen|oikea|180|pois]. Vain oma näkymä, palvelimelle ei lähde mitään.
+// @description  Kääntää OMAA kameraa huoneen ympäri 90° askelin: chat-komento :kierrä [vasen|oikea|180|pois]; napit :kierrä paneeli (oletus piilossa). Vain oma näkymä, palvelimelle ei lähde mitään.
 // @kupla-oletus on
 // @author       re-lab
 // ==/UserScript==
@@ -233,15 +233,21 @@
   // omalla setterillä + input-tapahtumalla, muuten Reactin tila pitäisi tekstin.
   // Komennot-lisäosa (kp 23:37 "rotate kans ohjautuis siihe"): jos se on ladattu, :kierrä kulkee sen kautta ja näkyy
   //   :komennot-listassa. Konsoliversiossa (ei loaderia) alla oleva oma kuuntelija hoitaa sen kuten ennen.
+  // PANEELI (kp 2026-09-28 00:32 "toi kamera extension on häiritsevä · en voi ees siirtää · se ois kiva jos toimis vaikka
+  //   komennolla"): paneeli oletuksena PIILOSSA, kääntö komennolla. ':kierrä paneeli' näyttää/piilottaa, muistetaan.
+  let paneeliNakyy = false; try { paneeliNakyy = localStorage.getItem('kupla.huonekierto.paneeli') === '1'; } catch (e) {}
+  const vaihdaPaneeli = () => { paneeliNakyy = !paneeliNakyy; try { localStorage.setItem('kupla.huonekierto.paneeli', paneeliNakyy ? '1' : '0'); } catch (e) {}
+    if (paneeli) paneeli.style.display = paneeliNakyy && canvas() ? 'flex' : 'none'; return 'kierron paneeli ' + (paneeliNakyy ? 'näkyviin' : 'piiloon'); };
   const kierraKomento = a => {
     a = (a || '').toLowerCase();
+    if (a === 'paneeli' || a === 'panel') return vaihdaPaneeli();
     const uusi = a === 'pois' || a === '0' || a === 'reset' ? 0 : a === 'vasen' ? tila.kulma - 90 : a === '180' ? tila.kulma + 180
       : /^-?\d+$/.test(a) ? Math.round(Number(a) / 90) * 90 : tila.kulma + 90;
     aseta(uusi);
     return 'kierto ' + (((uusi % 360) + 360) % 360) + '°';
   };
   (VW.kuplaKomennotJono = VW.kuplaKomennotJono || []).push([['kierrä', 'kierra', 'kierto', 'rotate90'],
-    (teksti, sanat) => kierraKomento(sanat[0]), 'kääntää omaa näkymää 90°: vasen | oikea | 180 | pois', 'Huonekierto']);
+    (teksti, sanat) => kierraKomento(sanat[0]), 'kääntää omaa näkymää 90°: vasen | oikea | 180 | pois | paneeli (näytä/piilota napit)', 'Huonekierto']);
   document.addEventListener('keydown', e => {
     if (e.key !== 'Enter') return;
     if (VW.kuplaKomennot) return;   // komennot-lisäosa hoitaa
@@ -250,10 +256,7 @@
     //   komentoa lähti huoneeseen chattina. (?=\s|$) toimii ääkkösten kanssa.
     const m = /^\s*:(kierr[äa]|kierto|rotate90)(?=\s|$)\s*(\S*)\s*$/i.exec(t.value || ''); if (!m) return;
     e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-    const a = (m[2] || '').toLowerCase();
-    const uusi = a === 'pois' || a === '0' || a === 'reset' ? 0 : a === 'vasen' ? tila.kulma - 90 : a === '180' ? tila.kulma + 180
-      : /^-?\d+$/.test(a) ? Math.round(Number(a) / 90) * 90 : tila.kulma + 90;
-    aseta(uusi);
+    kierraKomento(m[2]);
     try {
       const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(t), 'value').set;
       setter.call(t, ''); t.dispatchEvent(new Event('input', { bubbles: true }));
@@ -265,7 +268,7 @@
     try {
       teePaneeli();
       const c = canvas();
-      if (paneeli) paneeli.style.display = c ? 'flex' : 'none';
+      if (paneeli) paneeli.style.display = c && paneeliNakyy ? 'flex' : 'none';
       if (!c) return;
       if (huoneVaihtui(c)) { paivitaPaneeli(); return; }
       if (tila.kulma) {
