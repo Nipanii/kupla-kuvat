@@ -5,6 +5,9 @@
 // @run-at       document-idle
 // @grant        none
 // @version      1.0.0
+// @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/huonekierto.user.js
+// @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/huonekierto.user.js
+// @homepageURL  https://github.com/Nipanii/kupla-kuvat
 // @description  Kääntää OMAA kameraa huoneen ympäri 90° askelin: paneeli ⟲ ⟳ ↺ ja chat-komento :kierrä [vasen|oikea|180|pois]. Vain oma näkymä, palvelimelle ei lähde mitään.
 // @kupla-oletus on
 // @author       re-lab

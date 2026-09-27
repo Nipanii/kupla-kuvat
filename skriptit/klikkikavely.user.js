@@ -5,6 +5,9 @@
 // @run-at       document-idle
 // @grant        none
 // @version      1.6.0
+// @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
+// @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
+// @homepageURL  https://github.com/Nipanii/kupla-kuvat
 // @description  Klikkaus korotetulle pinnalle (palikkalattia, lentokone) kävelyttää sinne eikä maahan pinnan takana. Pinta valitaan pinokorkeuskartasta: hiiren alla lähimpänä kameraa oleva ruudun päällys. Lähettää saman kävelypaketin kuin peli itse.
 // @kupla-oletus on
 // @author       re-lab
