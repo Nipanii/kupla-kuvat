@@ -4,11 +4,11 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.0.0
+// @version      1.1.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/asu.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/asu.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
-// @description  Pue asu merkkijonosta: chat-komento :asu <figure> [M|F] · :asu palauta (edellinen asu takaisin) · :asu näytä (oma nykyinen merkkijono). Botille: pue asu ja valitse botista "kopioi asuni".
+// @description  :asu = robon uusin asu listasta · :asu <nimi> · :asu lista · :asu <figure> [M|F] · :asu palauta (edellinen asu takaisin) · :asu näytä (oma nykyinen merkkijono). Botille: pue asu ja valitse botista "kopioi asuni".
 // @kupla-oletus off
 // @author       re-lab
 // ==/UserScript==
@@ -45,9 +45,25 @@
     if (!C) return 'asunvaihtoviestiä ei löytynyt';
     c.send(new C(gender, figure)); return 'ok';
   }
+  // 1.1.0 (kp 02:36 "sona ajaa komennon ja se asettaa viimeisen asun jonka oot updatennu sinne"): robo päivittää asulistaa
+  //   kupla-kuvat/asut.json. Listasta haetaan VAIN asumerkkijono + sukupuoli, ne tarkistetaan samalla regexillä kuin käsin
+  //   annettu — koodia ei ladata eikä ajeta, ja asu vaihtuu vain kun pelaaja itse kirjoittaa komennon.
+  const LISTA = 'https://nipanii.github.io/kupla-kuvat/asut.json';
+  const ASU_RE = /^[a-z]{2}-\d+(-\d+)*(\.[a-z]{2}-\d+(-\d+)*)*$/i;
+  async function listasta(nimi) {
+    let j; try { j = await (await fetch(LISTA + '?t=' + Date.now(), { cache: 'no-store' })).json(); } catch (e) { return 'asulistaa ei saatu: ' + e.message; }
+    const asut = (j && j.asut) || {}, avain = nimi ? Object.keys(asut).find(k => k.toLowerCase() === nimi.toLowerCase()) : j.uusin;
+    if (nimi === 'lista') return 'asut: ' + Object.keys(asut).join(', ') + (j.uusin ? ' · uusin: ' + j.uusin : '');
+    const x = avain && asut[avain]; if (!x) return nimi ? 'ei asua nimeltä ' + nimi + ' (:asu lista)' : 'listassa ei ole uusinta asua';
+    if (!ASU_RE.test(x.figure || '') || !/^[MF]$/.test(x.gender || '')) return 'listan asu "' + avain + '" on viallinen';
+    const n = nykyinen(); if (n && n.figure) { try { localStorage.setItem(LS, JSON.stringify(n)); } catch (e) {} }
+    const r = pue(x.figure, x.gender); return r === 'ok' ? 'päällä: ' + avain + (x.kuvaus ? ' (' + x.kuvaus + ')' : '') + '. Takaisin: :asu palauta' : r;
+  }
   function komento(sanat) {
     const a = (sanat[0] || '').trim();
-    if (!a || /^(apua|help|\?)$/i.test(a)) return ':asu <asumerkkijono> [M|F] · :asu palauta · :asu näytä';
+    if (!a) return listasta(null);
+    if (/^(apua|help|\?)$/i.test(a)) return ':asu = robon uusin asu · :asu <nimi> · :asu lista · :asu <asumerkkijono> [M|F] · :asu palauta · :asu näytä';
+    if (!a.includes('-') || a.toLowerCase() === 'lista') { if (!/^(palauta|undo|näytä|nayta|show)$/i.test(a)) return listasta(a.toLowerCase() === 'lista' ? 'lista' : a); }
     if (/^(näytä|nayta|show)$/i.test(a)) { const n = nykyinen(); if (n) { try { navigator.clipboard.writeText(n.figure); } catch (e) {} } return n ? 'asusi (kopioitu leikepöydälle): ' + n.figure + ' ' + n.gender : 'asua ei voitu lukea'; }
     if (/^(palauta|undo)$/i.test(a)) {
       let e = null; try { e = JSON.parse(localStorage.getItem(LS) || 'null'); } catch (x) {}
@@ -64,14 +80,14 @@
   (VW.kuplaKomennotJono = VW.kuplaKomennotJono || []).push([['asu', 'look', 'pue'],
     (teksti, sanat) => komento(sanat), 'pue asu merkkijonosta: :asu <figure> [M|F] · palauta · näytä', 'Asu']);
   // Konsoliversio / ilman komennot-lisäosaa: oma Enter-kuuntelija (sama tapa kuin huonekierrossa).
-  document.addEventListener('keydown', e => {
+  document.addEventListener('keydown', async e => {
     if (e.key !== 'Enter' || VW.kuplaKomennot) return;
     const t = e.target; if (!t || (t.tagName !== 'INPUT' && t.tagName !== 'TEXTAREA')) return;
     const m = /^\s*:(asu|look|pue)(?=\s|$)\s*(.*)$/i.exec(t.value || ''); if (!m) return;
     e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
-    const vastaus = komento(m[2].trim().split(/\s+/).filter(Boolean));
+    const tulos = komento(m[2].trim().split(/\s+/).filter(Boolean));
     try { const s = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(t), 'value').set; s.call(t, ''); t.dispatchEvent(new Event('input', { bubbles: true })); } catch (x) { t.value = ''; }
-    try { console.log('[asu]', vastaus); } catch (x) {}
+    const vastaus = await tulos; try { console.log('[asu]', vastaus); } catch (x) {}
     if (!VW.kuplaKomennot) { const d = document.createElement('div'); d.textContent = vastaus;
       d.style.cssText = 'position:fixed;left:50%;bottom:80px;transform:translateX(-50%);background:#1b1f2a;color:#fff;padding:6px 10px;border-radius:4px;font:12px sans-serif;z-index:99999';
       document.body.appendChild(d); setTimeout(() => d.remove(), 5000); }
