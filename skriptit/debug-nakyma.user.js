@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.4.0
+// @version      1.5.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/debug-nakyma.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/debug-nakyma.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -30,7 +30,7 @@
   VW.__kuplaDebugNakyma = true;
 
   const AVAIN = 'kupla.debugNakyma.v1';
-  const OLETUS = { paalla: false, ruudut: true, esineet: true, seina: false, hahmot: true, korkeus: false, vainHiiri: false, pinnalla: true, kaikki: false, kaikkiEsineet: false };
+  const OLETUS = { paalla: false, ruudut: true, esineet: true, seina: false, hahmot: true, korkeus: false, vainHiiri: false, sade: 0, pinnalla: true, kaikki: false, kaikkiEsineet: false };
   const VARIT = { ruudut: '#ffff78', hahmot: '#ff8a8a', lattia: '#77ffff', seina: '#ff99ff' };
   let A = Object.assign({}, OLETUS);
   try { Object.assign(A, JSON.parse(localStorage.getItem(AVAIN) || '{}')); } catch (e) {}
@@ -117,7 +117,8 @@
     ctx.font = fs + 'px monospace';
 
     const R = ruudut(rid); const hr = hiirenRuutu(k, R.lista); viimeisinHiiriRuutu = hr;
-    const lahella = (x, y) => !A.vainHiiri || (hr && Math.abs(x - hr.x) <= 1 && Math.abs(y - hr.y) <= 1);
+    const sade = Math.max(0, A.sade | 0);   // kp 2026-09-28 00:28 "range selector. alkaen yhdestä tilestä. ja sit voi kasvattaa sitä aoe"
+    const lahella = (x, y) => !A.vainHiiri || (hr && Math.abs(x - hr.x) <= sade && Math.abs(y - hr.y) <= sade);
 
     // ruudut
     if (A.ruudut) for (const [x, y, z, on] of R.lista) {
@@ -234,6 +235,14 @@
   valintaRivi('pinnalla', 'pinon päällä');
   valintaRivi('kaikki', 'myös ei-lattia');
   valintaRivi('vainHiiri', 'vain hiiri');
+  // alueen koko hiiren ympärillä: 0 = vain hiiren ruutu (1×1), 1 = 3×3, 2 = 5×5 … (kp 00:28 "yks ruutu kerrallaa")
+  const alue = document.createElement('div'); alue.style.cssText = 'display:flex;align-items:center;gap:4px;white-space:nowrap;';
+  const alueTeksti = document.createElement('span');
+  const alueNappi = (t, d) => { const b = document.createElement('span'); b.className = 'kdb-nappi'; b.textContent = t; b.style.cssText = 'cursor:pointer;padding:0 6px;border:1px solid #fff5;border-radius:3px;';
+    b.onclick = () => { A.sade = Math.max(0, Math.min(15, (A.sade | 0) + d)); tallenna(); paivitaAlue(); }; return b; };
+  const paivitaAlue = () => { const k = 2 * (A.sade | 0) + 1; alueTeksti.textContent = 'alue ' + k + '×' + k; };
+  alue.append(alueNappi('−', -1), alueTeksti, alueNappi('+', 1)); alue.title = 'vain hiiri -tilan alue hiiren ruudun ympärillä';
+  paivitaAlue(); valinnat.appendChild(alue);
   const vihje = document.createElement('div'); vihje.style.cssText = 'margin:3px 4px 1px;opacity:.7;font-size:11px;';
   vihje.textContent = 'Alt+klikkaus = speksit (hahmo ensin, +Shift = päällimmäinen) · F8 päälle/pois';
   otsikko.appendChild(nappi); paneeli.appendChild(otsikko); paneeli.appendChild(tila); paneeli.appendChild(valinnat); paneeli.appendChild(vihje);
