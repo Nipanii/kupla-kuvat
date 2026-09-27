@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.1.0
+// @version      1.6.0
 // @description  Klikkaus korotetulle pinnalle (palikkalattia, lentokone) kävelyttää sinne eikä maahan pinnan takana. Pinta valitaan pinokorkeuskartasta: hiiren alla lähimpänä kameraa oleva ruudun päällys. Lähettää saman kävelypaketin kuin peli itse.
 // @kupla-oletus on
 // @author       re-lab
@@ -111,28 +111,166 @@
     return { on: (x, y) => !!nahty[y * W + x] };
   }
 
+  // 1.5.0 Säde suoraan näyttöpisteestä (oikean klikkauksen valikko: ei RoomObjectMouseEventiä). Näyttöpiste on lineaarinen
+  //   (x,y,z):ssa, joten kanta lasketaan pelin omalla getScreenPoint:lla (sama muunnos kuin robon klikkitestissä, jonka
+  //   osumat on mitattu) ja korkeudella H ratkaistaan 2x2. Palauttaa KAIKKI päällykset jotka säde ylittää, edestä taakse.
+  function sadePisteesta(r, roomId, cx, cy) {
+    const cv = r.getRoomInstanceRenderingCanvas(roomId, 1); if (!cv || !cv.geometry) return [];
+    const sm = r.getFurnitureStackingHeightMap(roomId), lw = r.getLegacyWallGeometry(roomId); if (!sm || !lw) return [];
+    const g = cv.geometry, V = g.direction.constructor, s = cv._scale || 1;
+    const sp = (x, y, z) => { const p = g.getScreenPoint(new V(x, y, z)); return [p.x * s + cv._width / 2 + cv._screenOffsetX, p.y * s + cv._height / 2 + cv._screenOffsetY]; };
+    const o = sp(0, 0, 0), X = sp(1, 0, 0), Y = sp(0, 1, 0), Z = sp(0, 0, 1);
+    const ex = [X[0] - o[0], X[1] - o[1]], ey = [Y[0] - o[0], Y[1] - o[1]], ez = [Z[0] - o[0], Z[1] - o[1]];
+    const det = ex[0] * ey[1] - ex[1] * ey[0]; if (!det) return [];
+    let maxH = 0; for (let y = 0; y < sm.height; y++) for (let x = 0; x < sm.width; x++) { const h = sm.getTileHeight(x, y); if (h < ESTETTY && h > maxH) maxH = h; }
+    const osumat = []; let ed = null;
+    for (let H = maxH + 1; H >= -0.5; H -= 0.02) {
+      const bx = cx - o[0] - H * ez[0], by = cy - o[1] - H * ez[1];
+      const x = Math.round((bx * ey[1] - by * ey[0]) / det), y = Math.round((ex[0] * by - ex[1] * bx) / det);
+      if (x < 0 || y < 0 || x >= sm.width || y >= sm.height || !lw.isRoomTile(x, y)) { ed = null; continue; }
+      const top = sm.getTileHeight(x, y);
+      if (ed && ed.x === x && ed.y === y && ed.H > top && H <= top) osumat.push({ x, y, h: top, lattia: lw.getHeight(x, y) || 0 });
+      ed = { x, y, H };
+    }
+    return osumat;
+  }
+
+  // Pinnan valinta, sama klikkaukselle ja kursorille: hiiren alla oleva päällys jos sinne pääsee, muuten ensimmäinen
+  // saavutettava pinta säteellä taaksepäin. Muut tasot: oikean klikkauksen valikko (1.5.0).
+  // 1.6.0 kp 22:13 huonekierto: pintaRuutu ja sadePinnat (ja pelin oma getActiveSurfaceLocation :1631) laskevat spriten
+  //   offseteista OLETUSKULMAN kaavalla (-135°). Käännetyssä kamerassa ne osuvat väärään ruutuun. Silloin säde lasketaan
+  //   suoraan hiiren näyttöpisteestä pelin omalla getScreenPoint-kannalla (sadePisteesta), joka seuraa kameraa.
+  //   Hiiren paikka otetaan DOM:sta: DispatchMouseEvent.ts:9 antaa Nitrolle clientX/Y sellaisenaan.
+  let hiiri = null;
+  document.addEventListener('mousemove', e => { hiiri = { x: e.clientX, y: e.clientY }; }, true);
+  document.addEventListener('mousedown', e => { hiiri = { x: e.clientX, y: e.clientY }; }, true);
+  function kaannetty(re, roomId) {
+    const cv = re.getRoomInstanceRenderingCanvas(roomId, 1), d = cv && cv.geometry && cv.geometry.direction;
+    return !!d && Math.abs((((d.x + 135) % 360) + 360) % 360) > 0.5;
+  }
+
+  function valitse(re, roomId, event) {
+    if (hiiri && kaannetty(re, roomId)) {
+      const sade = sadePisteesta(re, roomId, hiiri.x, hiiri.y), S = saavutettavat(re, roomId);
+      const lista = S ? sade.filter(q => S.on(q.x, q.y)) : sade;
+      return { p: null, k: null, kohde: lista[0] || null, tapa: 'kierto', lista, i: lista[0] ? 0 : -1, sade };
+    }
+    const p = pintaRuutu(re, roomId, event), k = p && kaveltava(re, roomId, p.x, p.y);
+    let kohde = p && k && k.ok ? { ...p, h: k.h } : null, tapa = 'pinta';
+    const S = saavutettavat(re, roomId);
+    const sade = S ? sadePinnat(re, roomId, event) : [], lista = sade.filter(q => S.on(q.x, q.y));
+    if (S && (!kohde || !S.on(kohde.x, kohde.y)) && lista[0]) { kohde = lista[0]; tapa = 'säde'; }
+    let i = kohde ? lista.findIndex(q => q.x === kohde.x && q.y === kohde.y) : -1;
+    if (kohde && i < 0) { lista.unshift(kohde); i = 0; }
+    return { p, k, kohde, tapa, lista, i, sade };
+  }
+
   function kiinnita() {
     const r = RE(); if (!r || !r._roomObjectEventHandler) return false;
     const h = r._roomObjectEventHandler;
     if (h.__klikkikavely) return true;
+    // 1.4.0 Res 22:02 "miksei tää script sit näytä sitä sinistä tile selection markeria": kursori tulee pelin
+    //   handleMouseOverObject -> getActiveSurfaceLocation (RoomObjectEventHandler.ts:1593-1631), jossa sama canStandOn-portti
+    //   kuin klikkauksessa. Paikataan SE: kun pelin oma palauttaa null, palautetaan valitse()-pinta -> kursori näkyy siellä
+    //   minne klikkaus vie (myös seinän takana). Pelin omat pinnat (canStandOn true) pysyvät ennallaan.
+    // 🔴 1.5.1 kp 22:14 "sininen ruutu näkyy … oudos paikkaa, mokasit, kokeile ite": getActiveSurfaceLocationin z on SUHTEELLINEN
+    //   korkeus esineen pohjasta (natiivi palauttaa sizeZ, :1674), ja handleMouseOverObject (:1613) piirtää kursorin sijaintiin
+    //   (x, y, ESINEEN z) + TileCursorVisualization-kerros 1 nostettuna height*32 px. 1.4.0 antoi absoluuttisen korkeuden ->
+    //   kursori leijui esineen z:n verran liian korkealla, ja säteen takaruudussa vielä väärän esineen z:n päällä.
+    //   Korjaus: kun pinta tulee tältä skriptiltä, handleMouseOverObject rakentaa viestin uudestaan muodossa
+    //   (x, y, ABSOLUUTTINEN korkeus), height 0 = sama muoto kuin lattiaruudun kursori (handleMouseOverTile :1686).
+    const pintaOrig = h.getActiveSurfaceLocation;
+    let kursoriKohde = null;
+    if (typeof pintaOrig === 'function') h.getActiveSurfaceLocation = function (roomObject, event) {
+      const tulos = pintaOrig.apply(this, arguments), re = this._roomEngine;
+      const kaan = !!re && kaannetty(re, re.activeRoomId);          // käännettynä pelin oma tulos on oletuskulman kaavalla
+      if ((tulos && !kaan) || !roomObject || !event) return tulos;
+      try {
+        const v = valitse(re, re.activeRoomId, event); if (!v.kohde) return kaan ? null : tulos;
+        const V = roomObject.getLocation().constructor, z0 = roomObject.getLocation().z;
+        kursoriKohde = { x: v.kohde.x, y: v.kohde.y, h: v.kohde.h, V };
+        return new V(v.kohde.x, v.kohde.y, v.kohde.h - z0);   // suhteellinen, jos joku muu kutsuja lukee tätä
+      } catch (e) { VW.__klikkikavelyVirhe = String(e); return tulos; }
+    };
+    const yliOrig = h.handleMouseOverObject;
+    if (typeof yliOrig === 'function') h.handleMouseOverObject = function (category, roomId, event) {
+      kursoriKohde = null;
+      const msg = yliOrig.apply(this, arguments), k = kursoriKohde; kursoriKohde = null;
+      if (!msg || !k) return msg;                     // pelin oma pinta tai ei pintaa: ennallaan
+      try { return new msg.constructor(new k.V(k.x, k.y, k.h), 0, true, event.eventId); }
+      catch (e) { VW.__klikkikavelyVirhe = String(e); return msg; }
+    };
     const furniOrig = h.handleMoveTargetFurni;
     h.handleMoveTargetFurni = function (roomId, event) {
-      const tulos = furniOrig.apply(this, arguments);
-      if (tulos || this._roomEngine.moveBlocked) return tulos;
+      // pelin oma polku kun sen OMA getActiveSurfaceLocation löytää pinnan (canStandOn true) tai liike on estetty
+      const ro = this._roomEngine.getRoomObject(roomId, event.objectId, 10);
+      const kaan = kaannetty(this._roomEngine, roomId);
+      if (this._roomEngine.moveBlocked || typeof pintaOrig !== 'function' || (!kaan && ro && pintaOrig.call(this, ro, event))) return furniOrig.apply(this, arguments);
+      const tulos = false;
       try {
-        const re = this._roomEngine, p = pintaRuutu(re, roomId, event), k = p && kaveltava(re, roomId, p.x, p.y);
-        let kohde = p && k && k.ok ? p : null, tapa = 'pinta';
-        const S = saavutettavat(re, roomId);
-        if (S && (!kohde || !S.on(kohde.x, kohde.y))) {           // kylki tai päällys johon ei pääse -> katso taakse
-          const taakse = sadePinnat(re, roomId, event).find(q => S.on(q.x, q.y));
-          if (taakse) { kohde = taakse; tapa = 'säde'; }
-        }
-        VW.__klikkikavelyViime = { p, k, kohde, tapa };
-        if (!kohde) return tulos;
+        const { p, k, kohde, tapa, lista, i, sade } = valitse(this._roomEngine, roomId, event);
+        VW.__klikkikavelySade = sade;   // diagnostiikka: kaikki säteen pinnat ennen saavutettavuussuodatusta
+        VW.__klikkikavelyViime = { p, k, kohde, tapa, lista, i, t: Date.now(), objectId: event.objectId, lx: event.localX, ly: event.localY };
+        if (!kohde) return furniOrig.apply(this, arguments);
         this.sendWalkUpdate(kohde.x, kohde.y);
         return true;
       } catch (e) { VW.__klikkikavelyVirhe = String(e); return tulos; }
     };
+    // 🗑 1.2.0-1.3.1 tuplaklikkaus POISTETTU 1.5.0:ssa. Mitattu 21:53 robolla: pelin oma tuplaklikkaus palikkaan = UseFurniture,
+    //   ja :bh päällä palikka siirtyy :bh-korkeuteen (243908/243906 putosivat z0:aan). Res 22:06 "tuplaklikkaus togglee myös
+    //   kaman jos pitää klikkaa kaman läpi. ei oo hyvä tekniikka". Tupla-eleen syöminen rikkoisi lamppujen yms käytön, koska
+    //   kuplassa lähes kaikella canStandOn=false eikä skripti erota käyttöä läpiklikkauksesta. alt+painallus = siirto
+    //   (RoomObjectEventHandler.ts:623), ctrl = nosto, shift = kääntö -> muokkausnäppäimet varattu.
+    // 1.5.0 Res 22:08 "robo paljonko vaatis duunia tehdä right clickistä runescape tyylinen context menu" / "vois kävellä
+    //   lattialle, päälle yms": OIKEA KLIKKAUS huoneeseen = valikko kaikista tasoista hiiren alla. Konfliktiton (kp 22:09
+    //   "sellane mis ei oo konfliktei minkää muun kaa"): RoomView.tsx:20-23 kuuntelee vain click/mousemove/mousedown/mouseup,
+    //   ja live-bundlessa (robo 22:10) canvasilla ei ole oncontextmenu-käsittelijää eikä App-bundlessa 'contextmenu'-sanaa.
+    if (!VW.__klikkikavelyValikko) {
+      VW.__klikkikavelyValikko = true;
+      let el = null;
+      const sulje = () => { if (el) { el.remove(); el = null; } };
+      document.addEventListener('contextmenu', e => {
+        try {
+          const t = e.target; if (!t || t.tagName !== 'CANVAS' || !t.onmousedown) return;   // vain huoneen canvas (RoomView asettaa onmousedown)
+          const r = RE(), hh = r && r._roomObjectEventHandler, roomId = r && r.activeRoomId; if (!hh || roomId == null || roomId < 0) return;
+          if (r.isPlayingGame && r.isPlayingGame()) return;
+          e.preventDefault(); sulje();
+          const sade = sadePisteesta(r, roomId, e.clientX, e.clientY), S = saavutettavat(r, roomId);
+          VW.__klikkikavelyValikkoSade = sade;
+          el = document.createElement('div');
+          el.style.cssText = 'position:fixed;z-index:2147483647;min-width:170px;background:#1c1c1c;color:#eee;border:1px solid #555;border-radius:4px;'
+            + 'font:12px/1.4 Ubuntu,Arial,sans-serif;box-shadow:0 2px 8px #000a;padding:2px 0;user-select:none';
+          const otsikko = document.createElement('div');
+          otsikko.textContent = 'Kävele'; otsikko.style.cssText = 'padding:3px 10px;color:#f5c542;border-bottom:1px solid #444;font-weight:bold';
+          el.appendChild(otsikko);
+          if (!sade.length) { const d = document.createElement('div'); d.textContent = 'ei pintaa tässä'; d.style.cssText = 'padding:4px 10px;color:#888'; el.appendChild(d); }
+          sade.forEach((q, n) => {
+            const paasee = !S || S.on(q.x, q.y), nimi = q.h <= q.lattia + 0.01 ? 'Lattialle' : n === 0 ? 'Päälle' : 'Taakse';
+            const d = document.createElement('div');
+            d.textContent = `${nimi} · korkeus ${+q.h.toFixed(2)}${paasee ? '' : ' (ei pääsyä)'}`;
+            d.title = `ruutu ${q.x},${q.y}`;
+            d.style.cssText = 'padding:4px 10px;cursor:' + (paasee ? 'pointer' : 'default') + ';color:' + (paasee ? '#eee' : '#777');
+            if (paasee) {
+              d.onmouseenter = () => { d.style.background = '#3a5f8a'; };
+              d.onmouseleave = () => { d.style.background = ''; };
+              d.onmousedown = ev => { ev.stopPropagation(); ev.preventDefault(); };
+              d.onclick = ev => { ev.stopPropagation(); hh.sendWalkUpdate(q.x, q.y); VW.__klikkikavelyViime = { kohde: q, tapa: 'valikko', lista: sade, t: Date.now() }; sulje(); };
+            }
+            el.appendChild(d);
+          });
+          const peruuta = document.createElement('div');
+          peruuta.textContent = 'Peruuta'; peruuta.style.cssText = 'padding:4px 10px;cursor:pointer;color:#aaa;border-top:1px solid #444';
+          peruuta.onclick = ev => { ev.stopPropagation(); sulje(); };
+          el.appendChild(peruuta);
+          document.body.appendChild(el);
+          const w = el.offsetWidth, hgt = el.offsetHeight;
+          el.style.left = Math.min(e.clientX, innerWidth - w - 4) + 'px';
+          el.style.top = Math.min(e.clientY, innerHeight - hgt - 4) + 'px';
+        } catch (err) { VW.__klikkikavelyVirhe = String(err); sulje(); }
+      }, true);
+      document.addEventListener('mousedown', e => { if (el && !el.contains(e.target)) sulje(); }, true);
+      document.addEventListener('keydown', e => { if (e.key === 'Escape') sulje(); }, true);
+    }
     h.__klikkikavely = true; VW.__kuplaKlikkikavely = true;
     return true;
   }
