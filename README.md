@@ -13,3 +13,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/poke-koko-konsepti-v3.png` — Pokemon-koot v3: kokonaiskertoimet 1x/2x/3x nearest
 - `kuvat/poke-koko-konsepti-v4.png` — Pokemon-koot v4: ei suurennusta, isoin natiivina
 - `kuvat/poke-buzzwole-vertailu.png` — Buzzwole 1x / 1,25x / 1,5x lanczos / 1,5x nearest
+- `kuvat/poke-buzzwole-vertailu2.png` — Buzzwole: lanczos vs scale2x+alas
