@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.5.0
+// @version      1.6.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/huonekierto.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/huonekierto.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -175,6 +175,38 @@
     return true;
   }
 
+  // --- 1.6.0 kääntöanimaatio (#614) ---
+  // Res 2026-09-28 01:14 "kamera kierto tarvis animaation jossa kamera kääntyy vaiheittain. instant 180 on liian jarring" ·
+  //   01:15 "ei häivitystä vaan rotate tyylinen käännös" · 01:16 "ei haittaa vaikka kamojen kääntyminen laahais".
+  // Spritet ovat valmiita 90° kuvia, joten välikulmaa ei voi renderöidä. Feikki: lattia on 2:1-litistetty neliö, joten CSS
+  //   scaleY(0.5) rotate(θ) scaleY(2) kiertää sitä kuin kamera kiertäisi pystyakselin ympäri. Pelin canvas-elementtiä
+  //   kierretään ruudun keskipisteen ympäri (keskipiste() = se lattiapiste, jonka pidaKeskella pitää keskellä), ja lopussa
+  //   vaihdetaan oikeaan kulmaan + transform pois. Suunta MITATTU robolla 01:17: ':kierrä oikea' (+90) kääntää litistämättömät
+  //   lattia-akselit -90° (45°→-45°, 135°→45°) -> CSS-kulma = -Δ. Lähtö- ja loppu-transform samoilla funktioilla, jotta CSS
+  //   interpoloi vain rotate()-kulmaa (none→lista interpoloisi myös scaleY:t ja vääntäisi).
+  let animoi = false;
+  const pelinCanvas = () => [...document.querySelectorAll('canvas')].filter(e => e.onmousedown)
+    .sort((a, b) => b.width * b.height - a.width * a.height)[0] || null;
+  function kaanna(kulma) {
+    const c = canvas(), el = pelinCanvas();
+    const uusi = ((kulma % 360) + 360) % 360;
+    let d = uusi - tila.kulma; if (d > 180) d -= 360; if (d < -180) d += 360;
+    if (animoi || !c || !el || !d) return aseta(kulma);
+    let origin = '50% 50%';
+    try { const r = el.getBoundingClientRect(); origin = (c.cv._width / 2 * r.width / (c.cv._width || r.width)) + 'px ' + (c.cv._height / 2 * r.height / (c.cv._height || r.height)) + 'px'; } catch (e) {}
+    animoi = true;
+    const ms = Math.round(Math.abs(d) / 90 * 320), s0 = { t: el.style.transform, o: el.style.transformOrigin, tr: el.style.transition };
+    el.style.transition = 'none'; el.style.transformOrigin = origin; el.style.transform = 'scaleY(0.5) rotate(0deg) scaleY(2)';
+    void el.offsetWidth;
+    el.style.transition = 'transform ' + ms + 'ms ease-in-out'; el.style.transform = 'scaleY(0.5) rotate(' + (-d) + 'deg) scaleY(2)';
+    setTimeout(() => {
+      try { aseta(kulma); } finally {
+        el.style.transition = 'none'; el.style.transform = s0.t; el.style.transformOrigin = s0.o; void el.offsetWidth; el.style.transition = s0.tr; animoi = false;
+      }
+    }, ms);
+    return true;
+  }
+
   // --- paneeli ---
   let paneeli = null, kulmaTeksti = null;
   function paivitaPaneeli() { if (kulmaTeksti) kulmaTeksti.textContent = tila.kulma + '°'; }
@@ -209,8 +241,8 @@
     kahva.className = 'menu-header d-flex justify-content-center align-items-center'; kahva.style.cssText = 'cursor:move;margin-bottom:2px';
     kulmaTeksti = document.createElement('span'); kulmaTeksti.style.cssText = 'display:inline-block;min-width:36px;text-align:center;font-size:14px';
     const rivi = document.createElement('div'); rivi.style.cssText = 'display:flex;align-items:center';
-    rivi.append(nappi('⟲', 'käännä vasemmalle 90°', () => aseta(tila.kulma - 90)), kulmaTeksti,
-      nappi('⟳', 'käännä oikealle 90°', () => aseta(tila.kulma + 90)), nappi('↺', 'takaisin oletukseen', () => aseta(0)));
+    rivi.append(nappi('⟲', 'käännä vasemmalle 90°', () => kaanna(tila.kulma - 90)), kulmaTeksti,
+      nappi('⟳', 'käännä oikealle 90°', () => kaanna(tila.kulma + 90)), nappi('↺', 'takaisin oletukseen', () => kaanna(0)));
     paneeli.append(kahva, rivi);
     // raahaus kahvasta
     kahva.onmousedown = e => {
@@ -243,7 +275,7 @@
     if (a === 'paneeli' || a === 'panel') return vaihdaPaneeli();
     const uusi = a === 'pois' || a === '0' || a === 'reset' ? 0 : a === 'vasen' ? tila.kulma - 90 : a === '180' ? tila.kulma + 180
       : /^-?\d+$/.test(a) ? Math.round(Number(a) / 90) * 90 : tila.kulma + 90;
-    aseta(uusi);
+    kaanna(uusi);
     return 'kierto ' + (((uusi % 360) + 360) % 360) + '°';
   };
   (VW.kuplaKomennotJono = VW.kuplaKomennotJono || []).push([['kierrä', 'kierra', 'kierto', 'rotate90'],
