@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.4.0
+// @version      1.5.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/huonekierto.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/huonekierto.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -248,6 +248,11 @@
   };
   (VW.kuplaKomennotJono = VW.kuplaKomennotJono || []).push([['kierrä', 'kierra', 'kierto', 'rotate90'],
     (teksti, sanat) => kierraKomento(sanat[0]), 'kääntää omaa näkymää 90°: vasen | oikea | 180 | pois | paneeli (näytä/piilota napit)', 'Huonekierto']);
+  // 1.5.0 oikea klikkaus omaan hahmoon (klikkikävelyn 1.9.0 valikko; kp 00:48 #597 "omaa hahmoo lisää right click se rotaatio juttu")
+  (VW.kuplaValikkoJono = VW.kuplaValikkoJono || []).push({ kohde: 'oma', nimi: 'Kierrä kameraa', lisaosa: 'Huonekierto', ala: () => [
+    { nimi: '↺ Vasemmalle', tee: () => kierraKomento('vasen') }, { nimi: '↻ Oikealle', tee: () => kierraKomento('oikea') },
+    { nimi: '180°', tee: () => kierraKomento('180') }, { nimi: 'Oletusnäkymä', tee: () => kierraKomento('pois') },
+    { nimi: 'Napit näkyviin / piiloon', tee: () => kierraKomento('paneeli') }] });
   document.addEventListener('keydown', e => {
     if (e.key !== 'Enter') return;
     if (VW.kuplaKomennot) return;   // komennot-lisäosa hoitaa
