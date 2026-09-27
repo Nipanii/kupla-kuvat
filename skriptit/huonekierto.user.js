@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.6.0
+// @version      1.6.1
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/huonekierto.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/huonekierto.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -184,26 +184,45 @@
   //   vaihdetaan oikeaan kulmaan + transform pois. Suunta MITATTU robolla 01:17: ':kierrä oikea' (+90) kääntää litistämättömät
   //   lattia-akselit -90° (45°→-45°, 135°→45°) -> CSS-kulma = -Δ. Lähtö- ja loppu-transform samoilla funktioilla, jotta CSS
   //   interpoloi vain rotate()-kulmaa (none→lista interpoloisi myös scaleY:t ja vääntäisi).
+  // 🔴 1.6.1 Res 01:23 "robo sun piti tehä niin että kamera kääntyy gradually samalla tavalla kun :rotate komennolla" ·
+  //   "eikä mitään renderin css flippausta": CSS-feikki POIS. Nyt kamera kiertää OIKEASTI välikulmien kautta kuten pelin
+  //   RoomRotatingEffect: joka ruudunpäivitys sama geometria kuin aseta():n else-haara (direction + depth + _effectDirection +
+  //   location kiertokeskipisteen ympäri) välikulmalla, pidaKeskella samalla keskipisteellä. Seinät/seinäesineet piiloon
+  //   alussa (välikulmassa ne ovat väärin joka tapauksessa), lopussa aseta(kulma) tekee lopullisen tilan (seinät takaisin
+  //   jos 0°). Moniruutuisten siirrot tehdään vasta lopussa -> ne laahaavat hetken (Res 01:16 "ei haittaa").
+  //   Piilotetussa välilehdessä requestAnimationFrame ei aja -> setTimeout-varapolku.
   let animoi = false;
-  const pelinCanvas = () => [...document.querySelectorAll('canvas')].filter(e => e.onmousedown)
-    .sort((a, b) => b.width * b.height - a.width * a.height)[0] || null;
   function kaanna(kulma) {
-    const c = canvas(), el = pelinCanvas();
+    const c = canvas();
     const uusi = ((kulma % 360) + 360) % 360;
     let d = uusi - tila.kulma; if (d > 180) d -= 360; if (d < -180) d += 360;
-    if (animoi || !c || !el || !d) return aseta(kulma);
-    let origin = '50% 50%';
-    try { const r = el.getBoundingClientRect(); origin = (c.cv._width / 2 * r.width / (c.cv._width || r.width)) + 'px ' + (c.cv._height / 2 * r.height / (c.cv._height || r.height)) + 'px'; } catch (e) {}
+    if (animoi || !c || !d) return aseta(kulma);
+    huoneVaihtui(c);
+    if (!tila.alku) { tila.alku = tallennaAlku(c); if (!tila.alku) return aseta(kulma); }
+    const { g, V, cv } = c, a = tila.alku, keski = keskipiste(c), k0 = tila.kulma;
+    seinat(c, false); seinaesineet(c, true);
+    const asetaVali = k => {
+      const dx = a.d0.x + k, dy = a.d0.y;
+      g.direction = new V(dx, dy, a.d0.z); g.setDepthVector(new V(dx, dy, 5)); cv._effectDirection = new V(dx, dy, a.d0.z);
+      g.location = new V(a.o.x + a.L * Math.cos(rad(dx + 180)) * Math.cos(rad(dy)),
+                         a.o.y + a.L * Math.sin(rad(dx + 180)) * Math.cos(rad(dy)),
+                         a.o.z + a.L * Math.sin(rad(dy)));
+      pidaKeskella(c, keski);
+    };
     animoi = true;
-    const ms = Math.round(Math.abs(d) / 90 * 320), s0 = { t: el.style.transform, o: el.style.transformOrigin, tr: el.style.transition };
-    el.style.transition = 'none'; el.style.transformOrigin = origin; el.style.transform = 'scaleY(0.5) rotate(0deg) scaleY(2)';
-    void el.offsetWidth;
-    el.style.transition = 'transform ' + ms + 'ms ease-in-out'; el.style.transform = 'scaleY(0.5) rotate(' + (-d) + 'deg) scaleY(2)';
-    setTimeout(() => {
-      try { aseta(kulma); } finally {
-        el.style.transition = 'none'; el.style.transform = s0.t; el.style.transformOrigin = s0.o; void el.offsetWidth; el.style.transition = s0.tr; animoi = false;
-      }
-    }, ms);
+    const ms = Math.round(Math.abs(d) / 90 * 450), t0 = performance.now();
+    const seuraava = f => (document.hidden ? setTimeout(() => f(performance.now()), 16) : requestAnimationFrame(f));
+    // Varmistus: jos ruudunpäivitys ei aja (taustaikkuna jossa document.hidden on silti false), lopetetaan ajastimella.
+    let valmis = false;
+    const lopeta = () => { if (valmis) return; valmis = true; try { aseta(kulma, true); } catch (y) {} animoi = false; };
+    const askel = nyt => {
+      if (valmis) return;
+      const t = Math.min(1, (nyt - t0) / ms), e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      try { if (t < 1 && canvas() && canvas().cv === cv) { asetaVali(k0 + d * e); return seuraava(askel); } } catch (x) {}
+      lopeta();
+    };
+    setTimeout(lopeta, ms + 600);
+    seuraava(askel);
     return true;
   }
 
