@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.1.0
+// @version      1.2.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/huonekierto.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/huonekierto.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -177,7 +177,13 @@
     paneeli = document.createElement('div');
     paneeli.id = 'kupla-huonekierto';
     paneeli.className = 'nitro-context-menu';
-    paneeli.style.cssText = 'position:fixed;right:12px;bottom:140px;z-index:2147483646;user-select:none;display:none;flex-direction:column;color:#fff';
+    // 1.1.1 kp 23:26 "rotator GUI blockaa ui elementtei ja en voi siirtää": oletus oikean sivupalkin (leveys ~240 px)
+    // VASEMMALLE puolelle, ja raahattu paikka muistetaan (localStorage, vain tämä selain).
+    paneeli.style.cssText = 'position:fixed;right:250px;bottom:140px;z-index:2147483646;user-select:none;display:none;flex-direction:column;color:#fff';
+    try {
+      const p = JSON.parse(localStorage.getItem('kupla.huonekierto.paikka') || 'null');
+      if (p && p.x >= 0 && p.y >= 0 && p.x < innerWidth - 40 && p.y < innerHeight - 20) Object.assign(paneeli.style, { left: p.x + 'px', top: p.y + 'px', right: 'auto', bottom: 'auto' });
+    } catch (e) {}
     paneeli.title = 'Huonekierto (vain oma näkymä). Käännettynä seinät piilossa. Chat: :kierrä [vasen|oikea|180|pois]';
     // valikon alareunan nuoli (:after) kuuluu hahmovalikolle, ei irralliselle paneelille
     const css = document.createElement('style'); css.textContent = '#kupla-huonekierto:after{display:none!important}';
@@ -194,7 +200,11 @@
       e.preventDefault(); e.stopPropagation();
       const r0 = paneeli.getBoundingClientRect(), x0 = e.clientX, y0 = e.clientY;
       const liiku = ev => { paneeli.style.left = (r0.left + ev.clientX - x0) + 'px'; paneeli.style.top = (r0.top + ev.clientY - y0) + 'px'; paneeli.style.right = 'auto'; paneeli.style.bottom = 'auto'; };
-      const irti = () => { document.removeEventListener('mousemove', liiku, true); document.removeEventListener('mouseup', irti, true); };
+      const irti = () => {
+        document.removeEventListener('mousemove', liiku, true); document.removeEventListener('mouseup', irti, true);
+        const r = paneeli.getBoundingClientRect();
+        try { localStorage.setItem('kupla.huonekierto.paikka', JSON.stringify({ x: Math.round(r.left), y: Math.round(r.top) })); } catch (e) {}
+      };
       document.addEventListener('mousemove', liiku, true); document.addEventListener('mouseup', irti, true);
     };
     document.body.appendChild(paneeli);
@@ -204,8 +214,20 @@
   // --- chat-komento: :kierrä [vasen|oikea|180|pois|<aste>] ---
   // Siepataan Enter chat-kentässä ENNEN Reactia (capture), jotta komento ei lähde huoneeseen. Kentän tyhjennys Reactin
   // omalla setterillä + input-tapahtumalla, muuten Reactin tila pitäisi tekstin.
+  // Komennot-lisäosa (kp 23:37 "rotate kans ohjautuis siihe"): jos se on ladattu, :kierrä kulkee sen kautta ja näkyy
+  //   :komennot-listassa. Konsoliversiossa (ei loaderia) alla oleva oma kuuntelija hoitaa sen kuten ennen.
+  const kierraKomento = a => {
+    a = (a || '').toLowerCase();
+    const uusi = a === 'pois' || a === '0' || a === 'reset' ? 0 : a === 'vasen' ? tila.kulma - 90 : a === '180' ? tila.kulma + 180
+      : /^-?\d+$/.test(a) ? Math.round(Number(a) / 90) * 90 : tila.kulma + 90;
+    aseta(uusi);
+    return 'kierto ' + (((uusi % 360) + 360) % 360) + '°';
+  };
+  (VW.kuplaKomennotJono = VW.kuplaKomennotJono || []).push([['kierrä', 'kierra', 'kierto', 'rotate90'],
+    (teksti, sanat) => kierraKomento(sanat[0]), 'kääntää omaa näkymää 90°: vasen | oikea | 180 | pois', 'Huonekierto']);
   document.addEventListener('keydown', e => {
     if (e.key !== 'Enter') return;
+    if (VW.kuplaKomennot) return;   // komennot-lisäosa hoitaa
     const t = e.target; if (!t || (t.tagName !== 'INPUT' && t.tagName !== 'TEXTAREA')) return;
     // 🔴 EI \b: JS:n \w on ASCII, joten "kierrä\b" ei täsmää koskaan (ä ei ole sanamerkki) — mitattu 22:25 robolla, kolme
     //   komentoa lähti huoneeseen chattina. (?=\s|$) toimii ääkkösten kanssa.
