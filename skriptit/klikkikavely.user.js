@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.12.0
+// @version      1.13.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -38,6 +38,15 @@
   if (VW.__kuplaKlikkikavely) return;
 
   const RE = () => VW.NitroDevTools && VW.NitroDevTools.roomEngine;
+  // 1.13.0 socket-yhteys roomEnginen session managerin alta (sama haku kuin supervoimat getConn: olio jolla oma _cryptoState)
+  let _yhteys = null;
+  const yhteys = () => {
+    if (_yhteys) return _yhteys; const r = RE(); if (!r) return null; const seen = new Set();
+    const scan = (o, d) => { if (!o || _yhteys || d > 4 || typeof o !== 'object' || seen.has(o)) return; seen.add(o);
+      if (Object.getOwnPropertyDescriptor(o, '_cryptoState')) { _yhteys = o; return; }
+      for (const k of Object.getOwnPropertyNames(o)) { const de = Object.getOwnPropertyDescriptor(o, k); if (de && !de.get && de.value && typeof de.value === 'object') scan(de.value, d + 1); } };
+    scan(r._roomSessionManager, 0); return _yhteys;
+  };
 
   // 1.9.0 LISÄOSIEN RIVIT OIKEAN KLIKKAUKSEN VALIKKOON (kp 2026-09-28 00:44 "right clickaamal pelaajaa siel on mimic ja info
   //   … eli omat extensioni optionit tulee sielt", 00:45 tp, 00:48 "omaa hahmoo … se rotaatio juttu", "piilotetaa ne optiot
@@ -349,6 +358,11 @@
           let esine = null; try { esine = esinePisteessa(r, roomId, t, e.clientX, e.clientY); } catch (err) { VW.__klikkikavelyVirhe = String(err); }
           const ctx = { hahmo, esine, ruutu: sade[0] ? { x: sade[0].x, y: sade[0].y, h: sade[0].h } : null, roomId };
           VW.__klikkikavelyValikkoCtx = ctx;
+          // 1.13.0 OIKEA KLIKKAUS KÄÄNTÄÄ HAHMON KATSOMAAN KLIKATTUA RUUTUA (Res 2026-09-29 01:10 kuiskaus "tarvitaan joku selkeä
+          //   right click toiminto renderin sisällä" -> robo ehdotti "vasen kävelee, oikea osoittaa" -> Res "toi on hyvä").
+          //   Pelin oma 3301 UNIT_LOOK (x,y) = sama paketti jonka RoomObjectEventHandler.ts:2210 lähettää kun klikkaat toista
+          //   hahmoa, joten kaikki huoneessa näkevät käännöksen ilman skriptiä. Valikko aukeaa kuten ennen.
+          turva(() => { if (!ctx.ruutu) return; const c = yhteys(); if (c && c.sendRawPacket) { c.sendRawPacket(3301, [ctx.ruutu.x | 0, ctx.ruutu.y | 0], 'RoomUnitLookComposer'); VW.__klikkikavelyKatse = (VW.__klikkikavelyKatse || 0) + 1; } }, null);
           const turva = (f, oletus) => { try { return f(); } catch (err) { VW.__klikkikavelyVirhe = String(err); return oletus; } };
           const osion = kohde => valikkoRivit.filter(x => [].concat(x.kohde).includes(kohde) && (!x.nakyy || turva(() => x.nakyy(ctx), false)));
           const ilmoita = (v, virhe) => { const K = VW.kuplaKomennot; if (typeof v === 'string' && v) { if (K && K.ilmoita) K.ilmoita(v, virhe); else console.log('[klikkikävely]', v); } };
