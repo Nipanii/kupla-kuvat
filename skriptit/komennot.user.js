@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kupla Komennot
 // @namespace    https://re-lab.local/kupla
-// @version      1.2.0
+// @version      1.3.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/komennot.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/komennot.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -77,7 +77,7 @@
     return true;
   }
 
-  window.kuplaKomennot = { __versio: '1.2.0', lisaa, lista, aja, ilmoita };
+  window.kuplaKomennot = { __versio: '1.3.0', lisaa, lista, aja, ilmoita };
   const jono = window.kuplaKomennotJono = window.kuplaKomennotJono || [];
   for (const x of jono.splice(0)) { try { lisaa(...x); } catch (e) { console.warn('[komennot] jono', e); } }
   jono.push = (...xs) => { for (const x of xs) lisaa(...x); return 0; };
@@ -198,4 +198,19 @@
     { kohde: 'hahmo', nimi: 'Kopioi asu (mimic)', nakyy: ctx => ctx.hahmo.tyyppi !== 2, tee: ctx => { aja(':mimic ' + ctx.hahmo.nimi); }, lisaosa: 'Komennot' },
     { kohde: 'hahmo', nimi: 'Teleporttaa luokse', nakyy: tpOn, tee: ctx => { aja(':tp ' + ctx.hahmo.x + ' ' + ctx.hahmo.y); }, lisaosa: 'Komennot' },
     { kohde: 'ruutu', nimi: 'Teleporttaa tähän', nakyy: tpOn, tee: ctx => { aja(':tp ' + ctx.ruutu.x + ' ' + ctx.ruutu.y); }, lisaosa: 'Komennot' });
+
+  // 1.3.0 (Res 2026-09-28 02:55 "totta istuminen omasta hahmost · tai makaaminen", kp "diippii pohdintaa" oikean klikkauksen
+  //   valikkoon). Istu = 2235 ChangePostureMessageEvent (palvelin: makeSit, ei lue argumenttia — ChangePostureMessageEvent.java).
+  //   Makaa = palvelimen :lay-komento chattina 1314 (CommandHandler sieppaa, ei näy huoneelle; commands.keys.cmd_lay = 'lay').
+  //   Ei chat-spämmiä kummastakaan.
+  const asento = tapa => {
+    const h = huone(); if (!h) throw new Error('et ole huoneessa');
+    const c = yhteys(h.rsm); if (!c || typeof c.sendRawPacket !== 'function') throw new Error('yhteyttä ei löytynyt');
+    if (tapa === 'istu') c.sendRawPacket(2235, [1], 'kupla-istu'); else c.sendRawPacket(1314, [':lay', 0, ''], 'kupla-makaa');
+    return '';
+  };
+  lisaa(['istu'], () => asento('istu'), 'istu alas (sama kuin oikean klikkauksen Istu)', 'Komennot');
+  window.kuplaValikkoJono.push(
+    { kohde: 'oma', nimi: 'Istu', tee: () => asento('istu'), lisaosa: 'Komennot' },
+    { kohde: 'oma', nimi: 'Makaa', tee: () => asento('makaa'), lisaosa: 'Komennot' });
 })();
