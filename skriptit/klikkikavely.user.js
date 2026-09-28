@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.14.0
+// @version      1.15.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -473,9 +473,16 @@
   //   (2235, robotesti 01:13 istuu:true). Makaa = chat-komento :lay — 🔴 01:13 kuplassa EI vielä ollut lay-komentoa: ':lay'
   //   näkyi huoneessa tavallisena rivinä. Res lisää sen palvelimelle; siihen asti rivi lähettää sen chattiin.
   const oma = () => { const r = RE(), s = r && r._roomSessionManager && r._roomSessionManager.getSession(r.activeRoomId); return s; };
+  // 1.15.0 Res 01:14:44 "lisää seisominen vaan jos istuu jo tai makaa jo": asento pelin omasta mallista (figure_posture
+  //   'sit'/'lay'/'std', luettu robolta 01:15). Seiso = :stand (Daybreak StandCommand; palvelimen ChangePostureMessageEvent
+  //   vain istuttaa, ei nosta). Istu/Makaa näkyvät vain seisoessa.
+  const asento = () => { try { const r = RE(), s = oma(), idx = s._ownRoomIndex != null ? s._ownRoomIndex : s.ownRoomIndex;
+    const o = r.getRoomObject(r.activeRoomId, idx, 100); return (o && o.model && o.model.getValue('figure_posture')) || 'std'; } catch (e) { return 'std'; } };
+  const seisoo = () => !/^(sit|lay)$/.test(asento());
   (VW.kuplaValikkoJono = VW.kuplaValikkoJono || []).push(
-    { kohde: 'oma', lisaosa: 'Klikkikävely', nimi: 'Istu', tee: () => { const s = oma(); if (s) s.sendPostureMessage(1); } },
-    { kohde: 'oma', lisaosa: 'Klikkikävely', nimi: 'Makaa', tee: () => { const s = oma(); if (s) s.sendChatMessage(':lay', 0, ''); } });
+    { kohde: 'oma', lisaosa: 'Klikkikävely', nimi: 'Istu', nakyy: seisoo, tee: () => { const s = oma(); if (s) s.sendPostureMessage(1); } },
+    { kohde: 'oma', lisaosa: 'Klikkikävely', nimi: 'Makaa', nakyy: seisoo, tee: () => { const s = oma(); if (s) s.sendChatMessage(':lay', 0, ''); } },
+    { kohde: 'oma', lisaosa: 'Klikkikävely', nimi: 'Seiso', nakyy: () => !seisoo(), tee: () => { const s = oma(); if (s) s.sendChatMessage(':stand', 0, ''); } });
   (VW.kuplaKomennotJono = VW.kuplaKomennotJono || []).push([['kursori', 'cursor'],
     (teksti, sanat) => { const a = String((sanat && sanat[0]) || '').toLowerCase(); return a === 'iso' || a === 'pieni' ? asetaKursori(a) : 'pinnan kursori nyt: ' + tyyli + ' · :kursori iso | :kursori pieni'; },
     'pinnan kursorin tyyli: iso (pelin täysi ruutu) tai pieni (sininen korkeusneliö)', 'Klikkikävely']);
