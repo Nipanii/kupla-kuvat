@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.13.0
+// @version      1.14.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -468,6 +468,14 @@
     nimi: () => 'Pinnan kursori: ' + tyyli,
     ala: () => [{ nimi: (tyyli === 'iso' ? '✓ ' : '') + 'iso (pelin täysi ruutu)', tee: () => asetaKursori('iso') },
                 { nimi: (tyyli === 'pieni' ? '✓ ' : '') + 'pieni (sininen korkeusneliö)', tee: () => asetaKursori('pieni') }] });
+  // 1.14.0 OMAN HAHMON ISTU / MAKAA (Res 2026-09-29 01:12 kuiskaus "oman hahmon right clickaus pitäis näyttää makaa ja istu
+  //   toiminnot", 01:14 "voidaan vaan tehä se nappi lähettään sit ja lay komennot"). Istu = pelin oma sendPostureMessage(1)
+  //   (2235, robotesti 01:13 istuu:true). Makaa = chat-komento :lay — 🔴 01:13 kuplassa EI vielä ollut lay-komentoa: ':lay'
+  //   näkyi huoneessa tavallisena rivinä. Res lisää sen palvelimelle; siihen asti rivi lähettää sen chattiin.
+  const oma = () => { const r = RE(), s = r && r._roomSessionManager && r._roomSessionManager.getSession(r.activeRoomId); return s; };
+  (VW.kuplaValikkoJono = VW.kuplaValikkoJono || []).push(
+    { kohde: 'oma', lisaosa: 'Klikkikävely', nimi: 'Istu', tee: () => { const s = oma(); if (s) s.sendPostureMessage(1); } },
+    { kohde: 'oma', lisaosa: 'Klikkikävely', nimi: 'Makaa', tee: () => { const s = oma(); if (s) s.sendChatMessage(':lay', 0, ''); } });
   (VW.kuplaKomennotJono = VW.kuplaKomennotJono || []).push([['kursori', 'cursor'],
     (teksti, sanat) => { const a = String((sanat && sanat[0]) || '').toLowerCase(); return a === 'iso' || a === 'pieni' ? asetaKursori(a) : 'pinnan kursori nyt: ' + tyyli + ' · :kursori iso | :kursori pieni'; },
     'pinnan kursorin tyyli: iso (pelin täysi ruutu) tai pieni (sininen korkeusneliö)', 'Klikkikävely']);
