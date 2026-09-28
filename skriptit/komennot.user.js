@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kupla Komennot
 // @namespace    https://re-lab.local/kupla
-// @version      1.3.0
+// @version      1.4.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/komennot.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/komennot.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -77,7 +77,7 @@
     return true;
   }
 
-  window.kuplaKomennot = { __versio: '1.3.0', lisaa, lista, aja, ilmoita };
+  window.kuplaKomennot = { __versio: '1.4.0', lisaa, lista, aja, ilmoita };
   const jono = window.kuplaKomennotJono = window.kuplaKomennotJono || [];
   for (const x of jono.splice(0)) { try { lisaa(...x); } catch (e) { console.warn('[komennot] jono', e); } }
   jono.push = (...xs) => { for (const x of xs) lisaa(...x); return 0; };
@@ -213,4 +213,12 @@
   window.kuplaValikkoJono.push(
     { kohde: 'oma', nimi: 'Istu', tee: () => asento('istu'), lisaosa: 'Komennot' },
     { kohde: 'oma', nimi: 'Makaa', tee: () => asento('makaa'), lisaosa: 'Komennot' });
+
+  // 1.4.0 esineen Käytä (kp 02:57 "esim et käytä tavaraa sen sijaa et double click", Res 03:00 "joo ei noppa specific"):
+  //   pelin OMA RoomEngine.useRoomObject(id, kategoria) = infostandin Käytä-nappi (RoomEngine.ts:2408 -> logic.useObject()),
+  //   joten jokainen esine käyttäytyy kuten pelissä (noppa heittää, lamppu vaihtaa tilaa, linkki aukeaa). Ei omaa pakettia.
+  window.kuplaValikkoJono.push({ kohde: 'esine', nimi: 'Käytä', lisaosa: 'Komennot', tee: ctx => {
+    const r = window.NitroDevTools && window.NitroDevTools.roomEngine;
+    return r && typeof r.useRoomObject === 'function' && r.useRoomObject(ctx.esine.id, ctx.esine.cat) ? '' : 'tätä esinettä ei voi käyttää';
+  } });
 })();
