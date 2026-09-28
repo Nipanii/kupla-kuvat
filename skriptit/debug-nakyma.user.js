@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.5.2
+// @version      1.6.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/debug-nakyma.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/debug-nakyma.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -383,6 +383,16 @@
     const o = paras.cat === 100 ? hahmodata(rid, paras.u) : furnidata(r, paras.cat, paras.u); o.osuma = osuma;
     nayta(o);
   }, true);
+
+  // 1.6.0 kp 2026-09-28 02:59 "joo hei ois kiva jos se debug data sais tommosee valikkoo · right click ja alt nii näkee kaikki
+  //   datat · pelaaja, item": oikean klikkauksen valikkoon (klikkikävely 1.10.0+) rivi Tiedot, joka avaa saman speksi-ikkunan
+  //   kuin Alt+klikkaus. Toimii vaikka paneeli olisi pois (F8) — rivi ei piirrä mitään huoneeseen.
+  const tiedot = (d, virhe) => { try { if (d) { nayta(d); return ''; } } catch (e) {} return virhe; };
+  (VW.kuplaValikkoJono = VW.kuplaValikkoJono || []).push(
+    { kohde: ['hahmo', 'oma'], nimi: 'Tiedot', lisaosa: 'Debug-näkymä',
+      tee: ctx => { const r = RE(), u = r && r.getRoomObject(ctx.roomId, ctx.hahmo.roomIndex, 100); return tiedot(u && hahmodata(ctx.roomId, u), 'hahmoa ei löytynyt'); } },
+    { kohde: 'esine', nimi: 'Tiedot', lisaosa: 'Debug-näkymä',
+      tee: ctx => { const r = RE(), u = r && r.getRoomObject(ctx.roomId, ctx.esine.id, ctx.esine.cat); return tiedot(u && furnidata(r, ctx.esine.cat, u), 'esinettä ei löytynyt'); } });
 
   document.body.appendChild(paneeli);
   raahattava(paneeli, 'kupla.debugNakyma.paikka.paneeli');
