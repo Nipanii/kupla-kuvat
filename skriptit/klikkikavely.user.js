@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.9.1
+// @version      1.10.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -46,15 +46,17 @@
   //   (window.kuplaValikkoJono = window.kuplaValikkoJono || []).push({ kohde: 'hahmo' | 'oma' | 'ruutu' (tai taulukko),
   //     nimi: 'teksti' | ctx => 'teksti', nakyy: ctx => bool, tee: ctx => 'ilmoitus' | Promise, ala: ctx => [{ nimi, tee }],
   //     lisaosa: 'Nimi' });
-  //   ctx = { hahmo: { roomIndex, id, nimi, tyyppi, oma, x, y } | null, ruutu: { x, y, h } | null, roomId }.
-  //   'hahmo' = joku muu kuin sinä, 'oma' = oma hahmo, 'ruutu' = päällimmäinen pinta kursorin alla. nakyy false -> rivi piiloon.
+  //   ctx = { hahmo: { roomIndex, id, nimi, tyyppi, oma, x, y } | null, esine: { id, cat (10 lattia / 20 seinä), luokka, nimi,
+  //     tiloja, interaktio, x, y, z, tila } | null, ruutu: { x, y, h } | null, roomId }.
+  //   'hahmo' = joku muu kuin sinä, 'oma' = oma hahmo, 'esine' = päällimmäinen esine pikselitarkasti (1.10.0),
+  //   'ruutu' = päällimmäinen pinta kursorin alla. nakyy false -> rivi piiloon.
   const valikkoRivit = [];
   if (!VW.kuplaValikko) {
     const lisaaRivi = x => { if (x && x.nimi != null && x.kohde) valikkoRivit.push(x); };
     const vj = VW.kuplaValikkoJono = VW.kuplaValikkoJono || [];
     for (const x of vj.splice(0)) lisaaRivi(x);
     vj.push = (...xs) => { xs.forEach(lisaaRivi); return 0; };
-    VW.kuplaValikko = { __versio: '1.9.1', lisaa: lisaaRivi, rivit: () => valikkoRivit.slice() };
+    VW.kuplaValikko = { __versio: '1.10.0', lisaa: lisaaRivi, rivit: () => valikkoRivit.slice() };
   }
 
   // Hahmo kursorin alla: hahmon sprite-laatikko (sama getRoomObjectBoundingRectangle kuin debug-näkymässä), useammasta
@@ -75,6 +77,29 @@
     const ud = s && s.userDataManager && s.userDataManager.getUserDataByIndex(paras.o.id); if (!ud) return null;
     const oma = (s._ownRoomIndex != null ? s._ownRoomIndex : s.ownRoomIndex) === ud.roomIndex, l = paras.o.getLocation();
     return { roomIndex: ud.roomIndex, id: ud.webID, nimi: ud.name, tyyppi: ud.type, oma, x: Math.round(l.x), y: Math.round(l.y) };
+  }
+  // 1.10.0 ESINE kursorin alla (kp 2026-09-28 02:57 "käytä tavaraa sen sijaa et double click", 02:59 "right click ja alt nii
+  //   näkee kaikki datat · pelaaja, item"; Res "ei noppa specific"). Pelin oma osumajärjestys kuten debug-näkymä 1.4.0:
+  //   RoomSpriteCanvas.checkMouseHits (RoomSpriteCanvas.ts:890) — aktiiviset spritet päältä alas, PIKSELItesti
+  //   (containsPoint), sprite.label = objektin instanceId (:452). Päällimmäinen lattia- tai seinäesine; hahmot ohitetaan.
+  function esinePisteessa(r, roomId, canvasEl, cx, cy) {
+    const cv = r.getRoomInstanceRenderingCanvas(roomId, 1), inst = r.getRoomInstance(roomId);
+    if (!cv || !inst || typeof cv.getExtendedSprite !== 'function' || !(cv._activeSpriteCount > 0)) return null;
+    const rect = canvasEl.getBoundingClientRect(), kx = rect.width / (cv._width || rect.width), ky = rect.height / (cv._height || rect.height), s = cv._scale || 1;
+    const x = Math.trunc(((cx - rect.left) / kx - (cv._screenOffsetX || 0)) / s), y = Math.trunc(((cy - rect.top) / ky - (cv._screenOffsetY || 0)) / s);
+    const kartta = new Map(); for (const cat of [10, 20]) for (const u of inst.getRoomObjectsForCategory(cat)) kartta.set(String(u.instanceId), { cat, u });
+    for (let i = cv._activeSpriteCount - 1; i >= 0; i--) {
+      const sp = cv.getExtendedSprite(i); if (!sp || sp.skipMouseHandling) continue;
+      const o = kartta.get(sp.label); if (!o) continue;
+      let osuu = false; try { osuu = sp.containsPoint({ x: x - sp.x, y: y - sp.y }); } catch (e) {}
+      if (!osuu) continue;
+      const u = o.u, l = u.getLocation(); let tid, fd = null, tila;
+      try { tid = u.model.getValue('furniture_type_id'); const sdm = r._sessionDataManager; fd = o.cat === 20 ? sdm.getWallItemData(tid) : sdm.getFloorItemData(tid); } catch (e) {}
+      try { tila = u.getState(0); } catch (e) {}
+      return { id: u.id, cat: o.cat, luokka: u.type, nimi: (fd && fd.name) || u.type, tiloja: fd ? fd.interactionModesCount : undefined,
+        interaktio: fd ? fd.interactionType : undefined, x: Math.round(l.x), y: Math.round(l.y), z: +l.z.toFixed(2), tila };
+    }
+    return null;
   }
   const ESTETTY = 40; // palvelimen pinoraja (SetCustomStackingHeight clamp 40); 63.996 = "ei pinota/kävellä" -merkki
 
@@ -321,7 +346,8 @@
           };
           // 1.9.0 lisäosien rivit: hahmon osio ylös (hahmon nimi otsikkona kuten pelin omassa valikossa), ruudun osio kävelyn alle
           let hahmo = null; try { hahmo = hahmoPisteessa(r, roomId, t, e.clientX, e.clientY); } catch (err) { VW.__klikkikavelyVirhe = String(err); }
-          const ctx = { hahmo, ruutu: sade[0] ? { x: sade[0].x, y: sade[0].y, h: sade[0].h } : null, roomId };
+          let esine = null; try { esine = esinePisteessa(r, roomId, t, e.clientX, e.clientY); } catch (err) { VW.__klikkikavelyVirhe = String(err); }
+          const ctx = { hahmo, esine, ruutu: sade[0] ? { x: sade[0].x, y: sade[0].y, h: sade[0].h } : null, roomId };
           VW.__klikkikavelyValikkoCtx = ctx;
           const turva = (f, oletus) => { try { return f(); } catch (err) { VW.__klikkikavelyVirhe = String(err); return oletus; } };
           const osion = kohde => valikkoRivit.filter(x => [].concat(x.kohde).includes(kohde) && (!x.nakyy || turva(() => x.nakyy(ctx), false)));
@@ -344,6 +370,8 @@
           const rakenna = () => {
             el.textContent = '';
             if (hahmo) { const L = osion(hahmo.oma ? 'oma' : 'hahmo'); if (L.length) { rivi(hahmo.nimi || 'hahmo', 'menu-header p-1'); L.forEach(toiminto); } }
+            // 1.10.0 esineen osio: otsikkona esineen NIMI (kp 02:17 "referoi itemeihin niiden nimellä"), luokka vihjeenä
+            if (esine) { const L = osion('esine'); if (L.length) { const o = rivi(esine.nimi, 'menu-header p-1'); o.title = esine.luokka + ' #' + esine.id; L.forEach(toiminto); } }
             // Res 00:59 "toi right clickin oranssin taustan title vois lähteä": ei 'Kävele'-otsikkoa. Hahmon nimi jää otsikoksi
             //   vain kun hahmolle on toimintoja, koska muuten "Mimic" ei kerro kenen asu.
             if (!sade.length && !hahmo) rivi('ei pintaa tässä', 'menu-item list-item disabled');
