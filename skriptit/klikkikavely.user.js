@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.16.0
+// @version      1.17.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -437,7 +437,9 @@
   //   Toteutus: kursoriobjektin OMAN visualisaation getSpriteAssetName korvataan instanssissa (FurnitureVisualization.updateSprite
   //   kutsuu sitä, ja tyhjä nimi -> resetSprite = kerros piiloon). Kursoriobjekti luodaan huoneittain -> tarkistus 1 s välein.
   const KURSORI_AVAIN = 'kupla.klikkikavely.kursori';
-  const kursoriTyyli = () => { try { return localStorage.getItem(KURSORI_AVAIN) === 'pieni' ? 'pieni' : 'iso'; } catch (e) { return 'iso'; } };
+  // 1.17.0 Res 2026-09-29 01:31 "pinnan kursori valinta on turha sen vois defaultaa pieneen ja valinnan sijaan tehä siitä togglen":
+  //   oletus pieni (pelin oma), valikossa yksi rivi joka vaihtaa suoraan.
+  const kursoriTyyli = () => { try { return localStorage.getItem(KURSORI_AVAIN) === 'iso' ? 'iso' : 'pieni'; } catch (e) { return 'pieni'; } };
   let tyyli = kursoriTyyli();
   // 1.12.0 (kp 2026-09-28 04:38 "ei em dasheja valikoihin niist tulee nuottiavain"): valikkorivien ja vastauksen ajatusviivat
   //   pois (pelin fontti piirtää ne nuottiavaimena) -> sulut / pilkku.
@@ -465,9 +467,8 @@
   setInterval(paikkaaKursori, 1000);
   VW.__klikkikavelyKursori = { tyyli: () => tyyli, aseta: asetaKursori };
   (VW.kuplaValikkoJono = VW.kuplaValikkoJono || []).push({ kohde: 'ruutu', lisaosa: 'Klikkikävely',
-    nimi: () => 'Pinnan kursori: ' + tyyli,
-    ala: () => [{ nimi: (tyyli === 'iso' ? '✓ ' : '') + 'iso (pelin täysi ruutu)', tee: () => asetaKursori('iso') },
-                { nimi: (tyyli === 'pieni' ? '✓ ' : '') + 'pieni (sininen korkeusneliö)', tee: () => asetaKursori('pieni') }] });
+    nimi: () => (tyyli === 'iso' ? '✓ ' : '') + 'Iso kursori',
+    tee: () => asetaKursori(tyyli === 'iso' ? 'pieni' : 'iso') });
   // 1.14.0 OMAN HAHMON ISTU / MAKAA (Res 2026-09-29 01:12 kuiskaus "oman hahmon right clickaus pitäis näyttää makaa ja istu
   //   toiminnot", 01:14 "voidaan vaan tehä se nappi lähettään sit ja lay komennot"). Istu = pelin oma sendPostureMessage(1)
   //   (2235, robotesti 01:13 istuu:true). Makaa = chat-komento :lay — 🔴 01:13 kuplassa EI vielä ollut lay-komentoa: ':lay'
