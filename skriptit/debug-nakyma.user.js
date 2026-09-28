@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.6.0
+// @version      1.9.1
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/debug-nakyma.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/debug-nakyma.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -23,6 +23,10 @@
 //   speksit:         _sessionDataManager.getFloorItemData(typeId) / getWallItemData (IFurnitureData) + objektin mallin arvot
 //   hahmot:          _roomSessionManager.getSession(rid).userDataManager.getUserDataByIndex(i)
 // Kamera (zoom/raahaus/kääntö) luetaan joka freimi, joten overlay seuraa sitä. Mitään ei kirjoiteta peliin.
+// 1.8.0 (kp 2026-09-28 03:40 #669 "lisää se path juttu debug työkaluu · se joka näyttää mist menny ja mihin menos" · 04:34
+//   "laita manual ja auto refresh eriksee" · 04:38 "ei em dasheja valikoihin niist tulee nuottiavain"): valinta 'polut'
+//   (hahmojen viimeiset ruudut + pelin tuntema seuraava askel, ks. POLUT), speksi-ikkunaan erillinen 'päivitä'-nappi ja
+//   'auto'-ruksi, paikkamerkit '-' ajatusviivan sijaan (pelin fontti piirtää ajatusviivan nuottiavaimena).
 (function () {
   'use strict';
   const VW = (typeof unsafeWindow !== 'undefined' && unsafeWindow) || window;
@@ -30,7 +34,7 @@
   VW.__kuplaDebugNakyma = true;
 
   const AVAIN = 'kupla.debugNakyma.v1';
-  const OLETUS = { paalla: false, ruudut: true, esineet: true, seina: false, hahmot: true, korkeus: false, vainHiiri: false, sade: 0, hiiriRuutu: false, pintaRuutu: true, pinnalla: true, kaikki: false, kaikkiEsineet: false };
+  const OLETUS = { paalla: false, ruudut: true, esineet: true, seina: false, hahmot: true, korkeus: false, vainHiiri: false, sade: 0, hiiriRuutu: false, pintaRuutu: true, pinnalla: true, kaikki: false, kaikkiEsineet: false, polku: true, polkuAlt: false, polkuKaikki: true };
   const VARIT = { ruudut: '#ffff78', hahmot: '#ff8a8a', lattia: '#77ffff', seina: '#ff99ff' };
   let A = Object.assign({}, OLETUS);
   try { Object.assign(A, JSON.parse(localStorage.getItem(AVAIN) || '{}')); } catch (e) {}
@@ -101,6 +105,70 @@
 
   function kayttaja(rid, i) { try { const s = RE()._roomSessionManager.getSession(rid); return s && s.userDataManager && s.userDataManager.getUserDataByIndex(i); } catch (e) { return null; } }
 
+  // 1.8.0 POLUT (kp 2026-09-28 03:40 #669 "lisää se path juttu debug työkaluu · se joka näyttää mist menny ja mihin menos"):
+  //   MISTÄ = jokaisen hahmon viimeiset POLKU_N ruutua: kirjataan tässä selaimessa kun overlay on päällä, aina kun hahmon
+  //   pyöristetty ruutu vaihtuu; yli POLKU_MS vanhat putoavat (paikallaan seisovalta jää vain nykyinen ruutu). Viiva himmenee
+  //   vanhempaan päin. MINNE = pelin oma seuraava askel: hahmon logiikka (Nitro_Render_V3 MovingObjectLogic.ts
+  //   processMoveMessage) liikuttaa hahmoa _location -> _location + _locationDelta, ja palvelin antaa sen 1640-päivityksen
+  //   "mv x,y,z" -tilassa YKSI ASKEL kerrallaan; jonossa odottavat askeleet (_queuedMoveMessages[].targetLocation) jatkavat
+  //   nuolta. Vihreä nuoli + neliö = tunnettu seuraava ruutu. LOPULLISTA MÄÄRÄNPÄÄTÄ EI OLE CLIENTILLA (reitti lasketaan
+  //   palvelimella, muille lähetetään vain seuraava askel) -> sitä ei piirretä. Kentät mitattu robolla 2026-09-28 05:0x:
+  //   hahmon logic = "Rs" (minifioitu luokka), avaimet _location/_locationDelta/_queuedMoveMessages olemassa. Ei paketteja.
+  let altPohjassa = false;
+  const POLKU_N = 10, POLKU_MS = 60000, polut = new Map(); let polkuHuone = null;   // hahmon id (roomIndex) -> [{x, y, z, t}]
+  function paivitaPolut(rid, inst) {
+    if (polkuHuone !== rid) { polut.clear(); polkuHuone = rid; }
+    const nyt = performance.now(), elossa = new Set();
+    for (const u of inst.getRoomObjectsForCategory(100)) {
+      elossa.add(u.id); const l = u.getLocation(), x = Math.round(l.x), y = Math.round(l.y);
+      let p = polut.get(u.id); if (!p) polut.set(u.id, p = []);
+      const v = p[p.length - 1];
+      // t = milloin hahmo LÄHTI ruudusta (nykyiselle: nyt). Mitattu robolla 05:1x: saapumisaikaan sidottu ikä pudotti
+      //   lähtöruudun heti kun yli minuutin paikallaan seissyt hahmo lähti liikkeelle.
+      if (!v || v.x !== x || v.y !== y) { if (v) v.t = nyt; p.push({ x, y, z: l.z, t: nyt }); if (p.length > POLKU_N) p.shift(); }
+      else v.t = nyt;
+      while (p.length > 1 && nyt - p[0].t > POLKU_MS) p.shift();   // viimeinen (nykyinen ruutu) jää aina
+    }
+    for (const id of [...polut.keys()]) if (!elossa.has(id)) polut.delete(id);
+  }
+  function seuraavat(u) {   // pelin tuntemat tulevat askeleet: käynnissä olevan askeleen kohde + jono
+    const lg = u.logic || u._logic, out = []; if (!lg) return out;
+    const o = lg._location, d = lg._locationDelta;
+    if (o && d && Math.abs(d.x) + Math.abs(d.y) + Math.abs(d.z) > 0.01) out.push({ x: o.x + d.x, y: o.y + d.y, z: o.z + d.z });
+    for (const m of lg._queuedMoveMessages || []) { const t = m && m.targetLocation; if (t) out.push({ x: t.x, y: t.y, z: t.z }); }
+    return out;
+  }
+  function piirraPolut(ctx, k, inst, lahella, W, H) {
+    const ulkona = q => !q || q.x < -60 || q.y < -60 || q.x > W + 60 || q.y > H + 60;
+    ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    for (const u of inst.getRoomObjectsForCategory(100)) {
+      // 1.9.1 kp 06:28 "polut ei näy ellei hoveraa, tähän pitäs olla valinnat": polkuKaikki = kaikkien hahmojen polut hiirestä riippumatta
+      const l = u.getLocation(); if (!A.polkuKaikki && !lahella(Math.round(l.x), Math.round(l.y))) continue;
+      const nyk = k.piste(l.x, l.y, l.z); if (ulkona(nyk)) continue;
+      const p = polut.get(u.id) || [];
+      if (p.length > 1) {   // MISTÄ: vanhimmasta nykyiseen, viimeinen piste = hahmon todellinen (liukuva) paikka
+        const pts = p.slice(0, -1).map(q => k.piste(q.x, q.y, q.z)); pts.push(nyk);
+        for (let i = 1; i < pts.length; i++) { const a = pts[i - 1], b = pts[i]; if (!a || !b) continue;
+          ctx.globalAlpha = 0.2 + 0.7 * i / (pts.length - 1); ctx.strokeStyle = A.varit.hahmot; ctx.lineWidth = 3;
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+          ctx.fillStyle = A.varit.hahmot; ctx.beginPath(); ctx.arc(a.x, a.y, 2.5, 0, Math.PI * 2); ctx.fill(); }
+      }
+      const s = seuraavat(u);   // MINNE: katkoviiva seuraavien askelten läpi, nuolenkärki + neliö viimeiseen tunnettuun
+      if (s.length) {
+        const pts = [nyk, ...s.map(q => k.piste(q.x, q.y, q.z))].filter(Boolean);
+        ctx.globalAlpha = 0.95; ctx.strokeStyle = '#7dff9a'; ctx.lineWidth = 2.5; ctx.setLineDash([5, 4]);
+        ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y); for (const q of pts.slice(1)) ctx.lineTo(q.x, q.y); ctx.stroke(); ctx.setLineDash([]);
+        const b = pts[pts.length - 1], a = pts[pts.length - 2] || nyk, kulma = Math.atan2(b.y - a.y, b.x - a.x);
+        if (pts.length > 1) { ctx.fillStyle = '#7dff9a'; ctx.beginPath(); ctx.moveTo(b.x, b.y);
+          ctx.lineTo(b.x - 9 * Math.cos(kulma - 0.45), b.y - 9 * Math.sin(kulma - 0.45)); ctx.lineTo(b.x - 9 * Math.cos(kulma + 0.45), b.y - 9 * Math.sin(kulma + 0.45)); ctx.closePath(); ctx.fill(); }
+        const loppu = s[s.length - 1], c = [[-.5, -.5], [.5, -.5], [.5, .5], [-.5, .5]].map(([dx, dy]) => k.piste(loppu.x + dx, loppu.y + dy, loppu.z));
+        if (c.every(Boolean)) { ctx.strokeStyle = '#7dff9a'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(c[0].x, c[0].y); for (const q of c.slice(1)) ctx.lineTo(q.x, q.y); ctx.closePath(); ctx.stroke(); }
+      }
+    }
+    ctx.restore(); ctx.globalAlpha = 1;
+  }
+  VW.__kuplaDebugPolut = () => [...polut].map(([id, p]) => ({ id, polku: p.map(q => q.x + ',' + q.y), seuraavat: (() => { try { const r = RE(), u = r && r.getRoomObject(r.activeRoomId, id, 100); return u ? seuraavat(u).map(q => q.x + ',' + q.y) : []; } catch (e) { return []; } })() }));
+
   let viimeisinHiiriRuutu = null;
   function piirra() {
     requestAnimationFrame(piirra);
@@ -138,6 +206,8 @@
     }
     // esineet ja hahmot
     const inst = r.getRoomInstance(rid);
+    // 1.9.0 kp 06:26 "alt pohjassa näkee sen pathin · ja valinta et koko aja": historia kertyy aina, piirto joko aina tai vain Alt pohjassa
+    if (A.polku) { paivitaPolut(rid, inst); if (!A.polkuAlt || altPohjassa) piirraPolut(ctx, k, inst, lahella, W, H); } else if (polut.size) polut.clear();
     const kat = []; if (A.esineet) kat.push(10); if (A.seina) kat.push(20); if (A.hahmot) kat.push(100);
     for (const cat of kat) for (const u of inst.getRoomObjectsForCategory(cat)) {
       const l = u.getLocation(); if (cat !== 20 && !lahella(Math.round(l.x), Math.round(l.y))) continue;
@@ -240,6 +310,10 @@
   valintaRivi('vainHiiri', 'vain hiiri');
   valintaRivi('pintaRuutu', 'oma ruutu pinnoilla');
   valintaRivi('hiiriRuutu', 'oma ruutu myös lattialla');
+  valintaRivi('polku', 'polut (mistä, minne)');   // 1.8.0 #669, ks. POLUT
+  valintaRivi('polkuAlt', 'polut vain Alt pohjassa');
+  valintaRivi('polkuKaikki', 'polut kaikille (ei vain hiiren alla)');
+  cbt.polku.parentElement.title = 'hahmojen viimeiset ruudut (himmenevä viiva) ja seuraava askel (vihreä nuoli); lopullinen määränpää on vain palvelimella';
   // alueen koko hiiren ympärillä: 0 = vain hiiren ruutu (1×1), 1 = 3×3, 2 = 5×5 … (kp 00:28 "yks ruutu kerrallaa")
   const alue = document.createElement('div'); alue.style.cssText = 'display:flex;align-items:center;gap:4px;white-space:nowrap;';
   const alueTeksti = document.createElement('span');
@@ -258,13 +332,16 @@
   const vaihda = () => { A.paalla = !A.paalla; tallenna(); paivitaNappi(); if (!A.paalla) speksi.style.display = 'none'; };
   nappi.onclick = vaihda;
   VW.addEventListener('keydown', e => { if (e.key === 'F8') { e.preventDefault(); vaihda(); } }, true);
+  VW.addEventListener('keydown', e => { if (e.key === 'Alt') altPohjassa = true; }, true);
+  VW.addEventListener('keyup', e => { if (e.key === 'Alt') altPohjassa = false; }, true);
+  VW.addEventListener('blur', () => { altPohjassa = false; });
 
   let hudViim = '';
   function hud(d) {
     let t;
     if (!d) t = 'ei huonetta';
     else {
-      const hr = d.hr ? d.hr.x + ',' + d.hr.y + (d.hr.z ? ' h' + d.hr.z : '') : '–';
+      const hr = d.hr ? d.hr.x + ',' + d.hr.y + (d.hr.z ? ' h' + d.hr.z : '') : '-';
       t = 'huone  ' + d.rid + '\nkoko   ' + d.R.w + '×' + d.R.h + ' (' + d.R.lista.length + ' ruutua)\nhiiri  ' + hr +
         '\nzoom   ' + d.k.s + '   kamera ' + Math.round(d.k.dir) + '°\nlattia ' + d.maara[0] + '  seinä ' + d.maara[1] + '  hahmot ' + d.maara[2];
     }
@@ -317,20 +394,65 @@
       'käsiesine': arvo(u, 'figure_carry_object'), efekti: arvo(u, 'figure_effect'), tanssi: arvo(u, 'figure_dance'), nukkuu: arvo(u, 'figure_sleep'), kyltti: arvo(u, 'figure_sign')
     };
   }
-  function nayta(o) {
-    const rivit = Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => k.padEnd(13) + ' ' + v);
+  // 1.7.0 kp 2026-09-28 04:32 "oisko autoupdate speksi ikkunaan togle? · jos itemi voi päivittyä · niin sit se tunnistaa et
+  //   jos päivittyy": nayta(o, lahde) — lahde() lukee saman objektin uudelleen. 'päivitä'-valinta (localStorage) lukee sen
+  //   500 ms välein; muuttunut rivi välähtää keltaisena 1,5 s ja otsikko näyttää viimeisimmän muutoksen kellonajan.
+  //   Objekti poistui huoneesta -> "(poistui)" ja päivitys pysähtyy. Vain oma näkymä, ei paketteja.
+  const PAIV_AVAIN = 'kupla.debugNakyma.speksiPaivita';
+  let paivitaPaalla = true; try { paivitaPaalla = localStorage.getItem(PAIV_AVAIN) !== '0'; } catch (e) {}
+  let speksiLahde = null, speksiEdel = null, speksiAjastin = 0;
+  const riviTeksti = o => Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== '').map(([k, v]) => [k, k.padEnd(13) + ' ' + v]);
+  function nayta(o, lahde) {
+    speksiLahde = lahde || null; speksiEdel = null;
     speksi.textContent = '';
     const yla = document.createElement('div'); yla.className = 'menu-header d-flex align-items-center'; yla.title = 'raahaa = siirrä';
     const nimi = document.createElement('span'); nimi.textContent = 'Speksit'; nimi.style.cssText = 'flex:1;';
     yla.appendChild(nimi);
+    // 1.8.0 (kp 2026-09-28 04:34 "laita manual ja auto refresh eriksee"): 'auto'-ruksi (0,5 s välein, muistetaan) ja erillinen
+    //   'päivitä'-nappi joka lukee kerran heti, myös auton ollessa pois. Otsikko kertoo luettiinko muutoksia.
+    const paiv = document.createElement('label'); paiv.style.cssText = 'font-size:11px;margin-right:6px;cursor:pointer;' + (lahde ? '' : 'display:none;');
+    paiv.title = 'auto: lue objekti uudelleen 0,5 s välein; muuttuneet rivit välähtää';
+    const ruksi = document.createElement('input'); ruksi.type = 'checkbox'; ruksi.checked = paivitaPaalla; ruksi.style.cssText = 'margin-right:3px;vertical-align:middle;';
+    ruksi.onchange = () => { paivitaPaalla = ruksi.checked; try { localStorage.setItem(PAIV_AVAIN, paivitaPaalla ? '1' : '0'); } catch (e) {} };
+    paiv.appendChild(ruksi); paiv.appendChild(document.createTextNode('auto'));
+    const kasin = document.createElement('button'); kasin.textContent = 'päivitä'; kasin.title = 'lue objekti uudelleen nyt (kerran)';
+    if (!lahde) kasin.style.display = 'none';
     const kop = document.createElement('button'); kop.textContent = 'kopioi'; const sulje = document.createElement('button'); sulje.textContent = '×';
-    for (const b of [kop, sulje]) b.className = 'kdb-nappi';
-    kop.onclick = () => { try { navigator.clipboard.writeText(JSON.stringify(o, null, 1)); kop.textContent = 'kopioitu'; } catch (e) { kop.textContent = 'ei onnistunut'; } };
-    sulje.onclick = () => { speksi.style.display = 'none'; };
-    yla.appendChild(kop); yla.appendChild(sulje); speksi.appendChild(yla);
+    for (const b of [kasin, kop, sulje]) b.className = 'kdb-nappi';
+    kasin.style.marginRight = '4px';
+    let nykyinen = o;
+    kop.onclick = () => { try { navigator.clipboard.writeText(JSON.stringify(nykyinen, null, 1)); kop.textContent = 'kopioitu'; } catch (e) { kop.textContent = 'ei onnistunut'; } };
+    sulje.onclick = () => { speksi.style.display = 'none'; speksiLahde = null; };
+    yla.appendChild(paiv); yla.appendChild(kasin); yla.appendChild(kop); yla.appendChild(sulje); speksi.appendChild(yla);
     const runko = document.createElement('div'); runko.className = 'kdb-laatikko'; runko.style.cssText = 'white-space:pre-wrap;word-break:break-word;';
-    runko.textContent = rivit.join('\n'); speksi.appendChild(runko);
+    speksi.appendChild(runko);
+    const piirra = (uusi, muuttui) => {
+      nykyinen = uusi; runko.textContent = '';
+      for (const [k, t] of riviTeksti(uusi)) { const d = document.createElement('div'); d.textContent = t;
+        if (muuttui && muuttui.has(k)) { d.style.cssText = 'background:#b8860b;transition:background 1.5s;'; setTimeout(() => { d.style.background = 'transparent'; }, 60); }
+        runko.appendChild(d); }
+    };
+    piirra(o, null); speksiEdel = o;
     speksi.style.display = 'block';
+    clearInterval(speksiAjastin);
+    const kello = () => { const t = new Date(); return String(t.getHours()).padStart(2, '0') + ':' + String(t.getMinutes()).padStart(2, '0') + ':' + String(t.getSeconds()).padStart(2, '0'); };
+    // yksi lukukerta: palauttaa muuttuneiden rivien määrän, tai -1 kun objekti on poistunut huoneesta
+    const lue = () => {
+      let uusi = null; try { uusi = lahde(); } catch (e) {}
+      if (!uusi) { nimi.textContent = 'Speksit (poistui)'; clearInterval(speksiAjastin); return -1; }
+      const muuttui = new Set(); for (const k of new Set([...Object.keys(uusi), ...Object.keys(speksiEdel)])) if (k !== 'osuma' && String(uusi[k]) !== String(speksiEdel[k])) muuttui.add(k);
+      if (speksiEdel.osuma && !uusi.osuma) uusi.osuma = speksiEdel.osuma;
+      if (!muuttui.size) return 0;
+      speksiEdel = uusi; piirra(uusi, muuttui);
+      nimi.textContent = 'Speksit · muuttui ' + kello();
+      return muuttui.size;
+    };
+    if (lahde) kasin.onclick = () => { if (speksiLahde !== lahde) return; const n = lue(); if (n === 0) nimi.textContent = 'Speksit · luettu ' + kello() + ', ei muutoksia'; };
+    if (lahde) speksiAjastin = setInterval(() => {
+      if (speksi.style.display === 'none' || speksiLahde !== lahde) { clearInterval(speksiAjastin); return; }
+      if (!paivitaPaalla) return;
+      lue();
+    }, 500);
   }
   // 1.4.0 kp 23:40 "en saa painettua hahmoa altin kaa" / "painaa objektia hahmon läpi". SYY: vanha valinta vertasi
   // sprite-LAATIKOIDEN pinta-aloja (hahmo ×0.5). Hahmon laatikko on 90×130 = 11 700 px -> 5 850, joten mikä tahansa
@@ -379,20 +501,23 @@
     let paras, osuma;
     if (pino) { paras = (e.shiftKey ? pino[0] : (pino.find(o => o.cat === 100) || pino[0])) || null; osuma = 'pikseli, ' + pino.length + ' päällekkäin' + (e.shiftKey ? ', päällimmäinen' : ''); }
     else { paras = laatikkoValinta(r, rid, k, e.clientX, e.clientY); osuma = 'laatikko (varatapa)'; }
-    if (!paras) { const hr = viimeisinHiiriRuutu; nayta({ ruutu: hr ? hr.x + ',' + hr.y : '–', korkeus: hr ? hr.z : undefined, huone: rid, huom: 'ei esinettä tässä', osuma }); return; }
+    if (!paras) { const hr = viimeisinHiiriRuutu; nayta({ ruutu: hr ? hr.x + ',' + hr.y : '-', korkeus: hr ? hr.z : undefined, huone: rid, huom: 'ei esinettä tässä', osuma }); return; }
     const o = paras.cat === 100 ? hahmodata(rid, paras.u) : furnidata(r, paras.cat, paras.u); o.osuma = osuma;
-    nayta(o);
+    const pc = paras.cat, pid = paras.u.id;
+    nayta(o, () => { const rr = RE(), u = rr && rr.getRoomObject(rid, pid, pc); return u ? (pc === 100 ? hahmodata(rid, u) : furnidata(rr, pc, u)) : null; });
   }, true);
 
   // 1.6.0 kp 2026-09-28 02:59 "joo hei ois kiva jos se debug data sais tommosee valikkoo · right click ja alt nii näkee kaikki
   //   datat · pelaaja, item": oikean klikkauksen valikkoon (klikkikävely 1.10.0+) rivi Tiedot, joka avaa saman speksi-ikkunan
   //   kuin Alt+klikkaus. Toimii vaikka paneeli olisi pois (F8) — rivi ei piirrä mitään huoneeseen.
-  const tiedot = (d, virhe) => { try { if (d) { nayta(d); return ''; } } catch (e) {} return virhe; };
+  const tiedot = (d, virhe, lahde) => { try { if (d) { nayta(d, lahde); return ''; } } catch (e) {} return virhe; };
   (VW.kuplaValikkoJono = VW.kuplaValikkoJono || []).push(
     { kohde: ['hahmo', 'oma'], nimi: 'Tiedot', lisaosa: 'Debug-näkymä',
-      tee: ctx => { const r = RE(), u = r && r.getRoomObject(ctx.roomId, ctx.hahmo.roomIndex, 100); return tiedot(u && hahmodata(ctx.roomId, u), 'hahmoa ei löytynyt'); } },
+      tee: ctx => { const lue = () => { const r = RE(), u = r && r.getRoomObject(ctx.roomId, ctx.hahmo.roomIndex, 100); return u ? hahmodata(ctx.roomId, u) : null; };
+        return tiedot(lue(), 'hahmoa ei löytynyt', lue); } },
     { kohde: 'esine', nimi: 'Tiedot', lisaosa: 'Debug-näkymä',
-      tee: ctx => { const r = RE(), u = r && r.getRoomObject(ctx.roomId, ctx.esine.id, ctx.esine.cat); return tiedot(u && furnidata(r, ctx.esine.cat, u), 'esinettä ei löytynyt'); } });
+      tee: ctx => { const lue = () => { const r = RE(), u = r && r.getRoomObject(ctx.roomId, ctx.esine.id, ctx.esine.cat); return u ? furnidata(r, ctx.esine.cat, u) : null; };
+        return tiedot(lue(), 'esinettä ei löytynyt', lue); } });
 
   document.body.appendChild(paneeli);
   raahattava(paneeli, 'kupla.debugNakyma.paikka.paneeli');
