@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.15.0
+// @version      1.16.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -483,6 +483,15 @@
     { kohde: 'oma', lisaosa: 'Klikkikävely', nimi: 'Istu', nakyy: seisoo, tee: () => { const s = oma(); if (s) s.sendPostureMessage(1); } },
     { kohde: 'oma', lisaosa: 'Klikkikävely', nimi: 'Makaa', nakyy: seisoo, tee: () => { const s = oma(); if (s) s.sendChatMessage(':lay', 0, ''); } },
     { kohde: 'oma', lisaosa: 'Klikkikävely', nimi: 'Seiso', nakyy: () => !seisoo(), tee: () => { const s = oma(); if (s) s.sendChatMessage(':stand', 0, ''); } });
+  // 1.16.0 IGNOORAUS OIKEAAN KLIKKAUKSEEN (Res 2026-09-29 01:30 kuiskaus "ignoraukselle puuttuu oma nappinsa · sen vois lisää
+  //   right clickiin"). Pelin oma SessionDataManager (roomEngine._sessionDataManager, löydetty robolta 01:31) ignoreUser /
+  //   unignoreUser / isUserIgnored nimellä = sama polku kuin PR #29:n ignorelista. Vain käyttäjille (tyyppi 1), ei lemmikeille/boteille.
+  const sdm = () => { const r = RE(); return r && r._sessionDataManager; };
+  const ignoorattu = n => { try { return !!sdm().isUserIgnored(n); } catch (e) { return false; } };
+  (VW.kuplaValikkoJono = VW.kuplaValikkoJono || []).push({ kohde: 'hahmo', lisaosa: 'Klikkikävely',
+    nakyy: ctx => !!(ctx.hahmo && ctx.hahmo.nimi && ctx.hahmo.tyyppi === 1 && sdm()),
+    nimi: ctx => ignoorattu(ctx.hahmo.nimi) ? 'Poista ignoraus' : 'Ignoraa',
+    tee: ctx => { const n = ctx.hahmo.nimi, s = sdm(); if (ignoorattu(n)) { s.unignoreUser(n); return n + ': ignoraus poistettu'; } s.ignoreUser(n); return n + ' ignoorattu'; } });
   (VW.kuplaKomennotJono = VW.kuplaKomennotJono || []).push([['kursori', 'cursor'],
     (teksti, sanat) => { const a = String((sanat && sanat[0]) || '').toLowerCase(); return a === 'iso' || a === 'pieni' ? asetaKursori(a) : 'pinnan kursori nyt: ' + tyyli + ' · :kursori iso | :kursori pieni'; },
     'pinnan kursorin tyyli: iso (pelin täysi ruutu) tai pieni (sininen korkeusneliö)', 'Klikkikävely']);
