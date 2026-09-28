@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.11.0
+// @version      1.12.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -425,10 +425,12 @@
   const KURSORI_AVAIN = 'kupla.klikkikavely.kursori';
   const kursoriTyyli = () => { try { return localStorage.getItem(KURSORI_AVAIN) === 'pieni' ? 'pieni' : 'iso'; } catch (e) { return 'iso'; } };
   let tyyli = kursoriTyyli();
+  // 1.12.0 (kp 2026-09-28 04:38 "ei em dasheja valikoihin niist tulee nuottiavain"): valikkorivien ja vastauksen ajatusviivat
+  //   pois (pelin fontti piirtää ne nuottiavaimena) -> sulut / pilkku.
   function asetaKursori(t) {
     tyyli = t === 'pieni' ? 'pieni' : 'iso';
     try { localStorage.setItem(KURSORI_AVAIN, tyyli); } catch (e) {}
-    return 'pinnan kursori: ' + (tyyli === 'iso' ? 'iso (pelin täysi ruutu)' : 'pieni (pelin korkeusneliö)') + ' — näkyy kun hiiri liikkuu';
+    return 'pinnan kursori: ' + (tyyli === 'iso' ? 'iso (pelin täysi ruutu)' : 'pieni (pelin korkeusneliö)') + ', näkyy kun hiiri liikkuu';
   }
   function paikkaaKursori() {
     try {
@@ -450,11 +452,31 @@
   VW.__klikkikavelyKursori = { tyyli: () => tyyli, aseta: asetaKursori };
   (VW.kuplaValikkoJono = VW.kuplaValikkoJono || []).push({ kohde: 'ruutu', lisaosa: 'Klikkikävely',
     nimi: () => 'Pinnan kursori: ' + tyyli,
-    ala: () => [{ nimi: (tyyli === 'iso' ? '✓ ' : '') + 'iso — pelin täysi ruutu', tee: () => asetaKursori('iso') },
-                { nimi: (tyyli === 'pieni' ? '✓ ' : '') + 'pieni — sininen korkeusneliö', tee: () => asetaKursori('pieni') }] });
+    ala: () => [{ nimi: (tyyli === 'iso' ? '✓ ' : '') + 'iso (pelin täysi ruutu)', tee: () => asetaKursori('iso') },
+                { nimi: (tyyli === 'pieni' ? '✓ ' : '') + 'pieni (sininen korkeusneliö)', tee: () => asetaKursori('pieni') }] });
   (VW.kuplaKomennotJono = VW.kuplaKomennotJono || []).push([['kursori', 'cursor'],
     (teksti, sanat) => { const a = String((sanat && sanat[0]) || '').toLowerCase(); return a === 'iso' || a === 'pieni' ? asetaKursori(a) : 'pinnan kursori nyt: ' + tyyli + ' · :kursori iso | :kursori pieni'; },
     'pinnan kursorin tyyli: iso (pelin täysi ruutu) tai pieni (sininen korkeusneliö)', 'Klikkikävely']);
+
+  // 1.12.0 ALT + OIKEA (tai keskimmäinen) NAPPI EI ALOITA KALUSTEEN SIIRTOA (kp 2026-09-28 04:39:29 "right click + alt alkaa
+  //   siirtää tahattomasti huonekaluu estä se").
+  //   SYY (lähde D:/kupla-lahde/kupla-cc/client): DarkUI RoomView.tsx:22 canvas.onmousedown = DispatchMouseEvent, joka EI katso
+  //   mitä nappia painettiin (DispatchMouseEvent.ts:54 välittää event.altKey sellaisenaan) -> Nitro_Render_V3
+  //   RoomObjectEventHandler.ts:623: MOUSE_DOWN + altKey (ei ctrl/shift) kalusteeseen = REQUEST_MOVE = pelin siirtotila (kaluste
+  //   seuraa hiirtä, seuraava klikkaus sijoittaa sen). Eli PELI tekee sen, oikean napin kanssakin. debug-näkymän Alt-kuuntelija
+  //   nielee vain vasemman napin, ja kp 02:59 pyysi juuri "right click ja alt" -yhdistelmää tietoja varten -> osuu tähän.
+  //   ESTO: huoneen canvasin OMA capture-kuuntelija. Kohdevaiheessa capture-kuuntelijat ajetaan ennen canvas.onmousedown-
+  //   ominaisuutta (Chrome 89+), joten stopImmediatePropagation pitää pelin ulkona, mutta window/document-tason kuuntelijat
+  //   (muut lisäosat) ehtivät ajaa. Oikean klikkauksen valikko tulee 'contextmenu'-tapahtumasta (yllä) eikä muutu, ja pelin oma
+  //   Alt+VASEN = siirto sekä debug-näkymän Alt+vasen = speksit pysyvät ennallaan. Laskuri: window.__klikkikavelyAltEsto.
+  function altSuoja() {
+    for (const c of document.querySelectorAll('canvas')) {
+      if (!c.onmousedown || c.__kkAltSuoja) continue;   // vain huoneen canvas (RoomView asettaa onmousedown)
+      c.addEventListener('mousedown', e => { if (e.altKey && e.button !== 0) { e.stopImmediatePropagation(); VW.__klikkikavelyAltEsto = (VW.__klikkikavelyAltEsto || 0) + 1; } }, true);
+      c.__kkAltSuoja = true;
+    }
+  }
+  altSuoja(); setInterval(altSuoja, 1000);
 
   let yrit = 0; const t = setInterval(() => { if (kiinnita() || ++yrit > 240) clearInterval(t); }, 500);
 })();
