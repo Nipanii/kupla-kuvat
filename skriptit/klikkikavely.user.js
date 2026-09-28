@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.10.0
+// @version      1.11.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -413,5 +413,48 @@
     h.__klikkikavely = true; VW.__kuplaKlikkikavely = true;
     return true;
   }
+  // 1.11.0 PINNAN KURSORIN TYYLI (kp 2026-09-28 04:10:40 "ja entä se natiivi neliö pinnoille", 04:11:11 "tee siitä valinta", #682).
+  //   Korotetulla pinnalla (height > 0.8) peli vaihtaa kursorin tilaan 6 (TileCursorLogic CURSOR_HEIGHT_STATE): kerros 0 =
+  //   täysi ruudun ääriviiva (tile_cursor_64_a_0_0, 66x36) JALANJÄLJEN POHJALLA syvyydellä -2900 -> jää palikoiden taakse,
+  //   ja kerros 1 = pieni sininen neliö (b_0_0, 22x19) nostettuna height*32 px (TileCursorVisualization.getLayerYOffset).
+  //   Se pieni neliö on se "sininen neliö" — pelin oma korkeusmerkki, ei kenenkään pyyntö (Res 22:02 pyysi vain että pelin
+  //   kursori näkyy pinnoilla). 'iso' (oletus): kerros 1 piirtää saman täyden ääriviivan kuin kerros 0 (nostettuna, syvyys
+  //   100 eli pintojen edessä) ja kerros 0 piilotetaan. 'pieni' = pelin oma tila 6 sellaisenaan.
+  //   Toteutus: kursoriobjektin OMAN visualisaation getSpriteAssetName korvataan instanssissa (FurnitureVisualization.updateSprite
+  //   kutsuu sitä, ja tyhjä nimi -> resetSprite = kerros piiloon). Kursoriobjekti luodaan huoneittain -> tarkistus 1 s välein.
+  const KURSORI_AVAIN = 'kupla.klikkikavely.kursori';
+  const kursoriTyyli = () => { try { return localStorage.getItem(KURSORI_AVAIN) === 'pieni' ? 'pieni' : 'iso'; } catch (e) { return 'iso'; } };
+  let tyyli = kursoriTyyli();
+  function asetaKursori(t) {
+    tyyli = t === 'pieni' ? 'pieni' : 'iso';
+    try { localStorage.setItem(KURSORI_AVAIN, tyyli); } catch (e) {}
+    return 'pinnan kursori: ' + (tyyli === 'iso' ? 'iso (pelin täysi ruutu)' : 'pieni (pelin korkeusneliö)') + ' — näkyy kun hiiri liikkuu';
+  }
+  function paikkaaKursori() {
+    try {
+      const r = RE(); if (!r || !(r.activeRoomId >= 0) || typeof r.getRoomObjectCursor !== 'function') return;
+      const o = r.getRoomObjectCursor(r.activeRoomId), v = o && o.visualization;
+      if (!v || v.__kkKursori || typeof v.getSpriteAssetName !== 'function') return;
+      const orig = v.getSpriteAssetName;
+      v.getSpriteAssetName = function (scale, layerId) {
+        if (tyyli === 'iso' && (layerId === 0 || layerId === 1)) {
+          let tila = -1; try { tila = this.object.getState(0); } catch (e) {}
+          if (tila === 6) return layerId === 0 ? '' : orig.call(this, scale, 0);   // kerros 1 saa kerroksen 0 kehyksen
+        }
+        return orig.call(this, scale, layerId);
+      };
+      v.__kkKursori = true;
+    } catch (e) { VW.__klikkikavelyVirhe = String(e); }
+  }
+  setInterval(paikkaaKursori, 1000);
+  VW.__klikkikavelyKursori = { tyyli: () => tyyli, aseta: asetaKursori };
+  (VW.kuplaValikkoJono = VW.kuplaValikkoJono || []).push({ kohde: 'ruutu', lisaosa: 'Klikkikävely',
+    nimi: () => 'Pinnan kursori: ' + tyyli,
+    ala: () => [{ nimi: (tyyli === 'iso' ? '✓ ' : '') + 'iso — pelin täysi ruutu', tee: () => asetaKursori('iso') },
+                { nimi: (tyyli === 'pieni' ? '✓ ' : '') + 'pieni — sininen korkeusneliö', tee: () => asetaKursori('pieni') }] });
+  (VW.kuplaKomennotJono = VW.kuplaKomennotJono || []).push([['kursori', 'cursor'],
+    (teksti, sanat) => { const a = String((sanat && sanat[0]) || '').toLowerCase(); return a === 'iso' || a === 'pieni' ? asetaKursori(a) : 'pinnan kursori nyt: ' + tyyli + ' · :kursori iso | :kursori pieni'; },
+    'pinnan kursorin tyyli: iso (pelin täysi ruutu) tai pieni (sininen korkeusneliö)', 'Klikkikävely']);
+
   let yrit = 0; const t = setInterval(() => { if (kiinnita() || ++yrit > 240) clearInterval(t); }, 500);
 })();
