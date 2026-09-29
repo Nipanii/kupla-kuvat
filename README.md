@@ -17,3 +17,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/etusivu-A-0930.png` — kupla etusivu mockup A
 - `kuvat/etusivu-B-0930.png` — kupla etusivu mockup B
 - `kuvat/etusivu-C-0930.png` — kupla etusivu mockup C
+- `kuvat/etusivu-D-0930.png` — kupla etusivu mockup D
