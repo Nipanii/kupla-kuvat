@@ -20,3 +20,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/etusivu-D-0930.png` — kupla etusivu mockup D
 - `kuvat/etusivu-E-0930.png` — kupla etusivu mockup E
 - `kuvat/etusivu-F-0930.png` — kupla etusivu mockup F
+- `kuvat/etusivu-G-0930.png` — etusivu-mockup G = C + F:n footer-napit (Res 02:17)
