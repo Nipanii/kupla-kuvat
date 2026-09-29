@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kupla Figuredata-editori
 // @namespace    https://re-lab.local/kupla
-// @version      0.2.0
+// @version      0.2.1
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/figuredata-editori.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/figuredata-editori.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -179,9 +179,13 @@
   const tila = t => { const e = document.getElementById('fd-tila'); if (e) e.textContent = t; };
 
   // ruudun partItem React-fiberistä (5 tasoa ylöspäin, mitattu 29.9.)
+  // 0.2.1: DOM-solmun __reactFiber$ voi olla VANHA alternate-fiber — vaatepino 0.4.0 mittasi alavälilehden vaihdon jälkeen
+  // 958/1927 ruutua väärällä partItemilla (hiusten 3733 hattu-ruudussa). Nykyinen fiber on se jonka memoizedProps === __reactProps$.
   const partItem = d => {
-    const k = Object.keys(d).find(k => k.startsWith('__reactFiber'));
+    const keys = Object.keys(d);
+    const k = keys.find(k => k.startsWith('__reactFiber$')); const pk = keys.find(k => k.startsWith('__reactProps$'));
     let f = k && d[k];
+    if (f && pk && f.alternate && f.memoizedProps !== d[pk] && f.alternate.memoizedProps === d[pk]) f = f.alternate;
     for (let i = 0; f && i < 8; i++, f = f.return) if (f.memoizedProps && f.memoizedProps.partItem) return f.memoizedProps.partItem;
     return null;
   };

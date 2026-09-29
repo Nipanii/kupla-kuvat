@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         Kupla vaatepino (figure stack)
 // @namespace    https://re-lab.local/kupla
-// @version      0.3.0
+// @version      0.4.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/figure-stack.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/figure-stack.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
 // @match        https://kupla.cc/*
 // @grant        none
 // @run-at       document-idle
-// @description  Useampi vaate samasta kategoriasta päällekkäin (esim. kaksi hattua tai kaksi takkia). Vaatekaapissa: tavallinen klikkaus toimii kuten ennenkin; ruudun kulman vihreä + lisää vaatteen päälle (pinoon), pinotuissa näkyy järjestysnumero (1 = alin) ja sen klikkaus poistaa vaatteen pinosta. Pinossa olevan vaatteen klikkaus valitsee sen väritettäväksi (sininen numero), jolloin paletti värittää juuri sen. Renderöi myös muiden pelaajien pinotut asut. Värivalinta koskee päällimmäistä.
+// @description  Useampi vaate samasta kategoriasta päällekkäin (esim. kaksi hattua tai kaksi takkia). Vaatekaapissa: tavallinen klikkaus toimii kuten ennenkin; ruudun kulman vihreä + lisää vaatteen päälle (pinoon), pinotuissa on punainen - joka poistaa sen pinosta ja järjestysnumero (1 = alin). Pinossa olevan vaatteen klikkaus valitsee sen väritettäväksi, jolloin paletti värittää juuri sen. Renderöi myös muiden pelaajien pinotut asut. Värivalinta koskee päällimmäistä.
 // @author       re-lab
 // ==/UserScript==
 /*
@@ -37,6 +37,12 @@
  *   tyhjennä pinoa vaan valitsee sen väritettäväksi ("värikohde", sininen numero); paletti näyttää kohteen värit ja
  *   värittää sen (FigureData.savePartSetColourId ohjataan pinon alkioon). Pinon järjestys ei muutu. Klikkaus ruutuun joka
  *   ei ole pinossa toimii kuten ennenkin (yksi vaate). Värit tallentuvat merkkijonoon alkiokohtaisesti pinon järjestyksessä.
+ * 0.4.0 (Res 23:25 / 23:28): pinotun ruudun oikeassa yläkulmassa punainen "-" (poistaa pinosta) +:n tilalla;
+ *   järjestysnumero on pelkkä teksti ("1", "2"; ei nappi, ei ×). Sininen värikohdemerkki pois: ruudun oma valintatausta
+ *   seuraa värikohdetta (CategoryData.selectPartIndex + ruudukon setMaxPaletteCount, joten myös palettien määrä vastaa
+ *   kohdetta). Vaatekaapin tallennus lukee vain FigureDatan merkkijonon, ei valittua ruutua.
+ *   KORJAUS: ruudun React-fiber haetaan nykyisestä (ei vanhasta alternate-)fiberistä; 0.2.0-0.3.0 saattoivat alavälilehden
+ *   vaihdon jälkeen näyttää merkit väärissä ruuduissa ja +:n klikkaus ajaa toisen vaatteen (jopa toisen kategorian) valinnan.
  * RAJA: kupla.cc/avatarimage (palvelimen kuvapalvelu) piirtää edelleen vain viimeisen duplikaatin.
  * RAJA: renderöijä patchataan vasta kun huoneessa on ensimmäinen avatar; sitä ennen luodut kuvat (esim. työkalupalkin
  *   pää) näyttävät vanhan tavan, kunnes ne luodaan uudelleen. Huoneen avatarit päivitetään patchatessa.
@@ -44,7 +50,7 @@
 (() => {
   'use strict';
   const W = window;
-  const VERSION = '0.3.0';
+  const VERSION = '0.4.0';
   if (W.__figureStack && W.__figureStack.version === VERSION && !W.__figureStackTestOnly) return;
   const TAG = '[vaatepino]';
   const SEP = '~';
@@ -225,7 +231,16 @@
     return true;
   }
 
-  const fiberOf = el => { const k = el && Object.keys(el).find(k => k.startsWith('__reactFiber$')); return k ? el[k] : null; };
+  // DOM-solmun __reactFiber$ voi olla VANHA vaihtoehtofiber (mitattu 0.4.0: alavälilehden vaihdon jälkeen 958/1927 ruutua
+  // antoi väärän partItemin, esim. hiusten 3733 hattu-ruudussa). Nykyinen host-fiber on se, jonka memoizedProps === __reactProps$.
+  const fiberOf = el => {
+    if (!el) return null;
+    const keys = Object.keys(el); const fk = keys.find(k => k.startsWith('__reactFiber$')); const pk = keys.find(k => k.startsWith('__reactProps$'));
+    const f = fk ? el[fk] : null; if (!f) return null;
+    const props = pk ? el[pk] : undefined;
+    if (f.alternate && f.memoizedProps !== props && f.alternate.memoizedProps === props) return f.alternate;
+    return f;
+  };
   function upProps(el, pred, max) {
     let f = fiberOf(el);
     for (let d = 0; f && d < (max || 40); d++, f = f.return) { const p = f.memoizedProps; if (p && typeof p === 'object' && pred(p)) return p; }
@@ -262,7 +277,7 @@
     const pp = upProps(el, p => p.partItem, 8);
     const cp = upProps(el, p => p.category && p.model && typeof p.model.selectPart === 'function', 40);
     if (!pp || !cp || !pp.partItem) return null;
-    return { partItem: pp.partItem, onClick: pp.onClick, type: cp.category.name, category: cp.category, model: cp.model };
+    return { partItem: pp.partItem, onClick: pp.onClick, type: cp.category.name, category: cp.category, model: cp.model, setMaxPaletteCount: cp.setMaxPaletteCount };
   }
 
   // Värikohteen vaihto: paletin valinta näyttää kohteen värit (CategoryData.selectColorIds ei tallenna mitään).
@@ -270,6 +285,13 @@
     const e = (stacks(fd).get(t.type) || []).find(x => x.id === id);
     if (e) targets(fd).set(t.type, id); else targets(fd).delete(t.type);
     t.category.selectColorIds(e ? e.colors : (fd._colors.get(t.type) || []));
+    // Ruudun oma valintatausta seuraa värikohdetta (vain näkymän valinta; FigureData ei muutu).
+    const shownId = e ? id : fd._data.get(t.type);
+    const idx = t.category.parts.findIndex(p => p && p.id === shownId);
+    if (idx >= 0 && idx !== t.category.selectedPartIndex) {
+      const item = t.category.selectPartIndex(idx);
+      if (item && typeof t.setMaxPaletteCount === 'function') t.setMaxPaletteCount(item.maxColorIndex || 1);
+    }
     setTimeout(markGrid, 30);
   }
 
@@ -323,6 +345,13 @@
     if (b.title !== title) b.title = title;
     return b;
   }
+  // Järjestysnumero: pelkkä teksti, ei klikattava (klikkaus menee ruudulle = värikohteen valinta).
+  function label(el, text, title) {
+    let b = el.querySelector(':scope > .vp-nro');
+    if (!b) { b = document.createElement('span'); b.className = 'vp-nro'; el.appendChild(b); }
+    if (b.textContent !== text) b.textContent = text;
+    if (b.title !== title) b.title = title;
+  }
   function dropBadge(el, cls) { const b = el.querySelector(':scope > .' + cls); if (b) b.remove(); }
 
   // figuredata-editorin FD-tila (nappi #fd-nappi.on / paneeli näkyvissä) lukee ruudun klikkaukset -> ei merkkejä silloin
@@ -333,16 +362,15 @@
     const fd = editorDone && findEditorFigureData();
     for (const el of document.querySelectorAll('.nitro-avatar-editor .layout-grid-item')) {
       const t = (!fdOn && fd) ? tileInfo(el) : null;
-      if (!t || NO_STACK.has(t.type) || t.partItem.isClear || !t.partItem.partSet) { dropBadge(el, 'vp-plus'); dropBadge(el, 'vp-nro'); continue; }
+      if (!t || NO_STACK.has(t.type) || t.partItem.isClear || !t.partItem.partSet) { dropBadge(el, 'vp-plus'); dropBadge(el, 'vp-minus'); dropBadge(el, 'vp-nro'); continue; }
       const a = stacks(fd).get(t.type) || [];
       const id = t.partItem.id; const primary = fd._data.get(t.type);
       const i = a.findIndex(e => e.id === id);
       const nro = (i >= 0) ? (i + 1) : ((id === primary && a.length) ? (a.length + 1) : 0); // 1 = alin
-      if (nro) {
-        const isTarget = (i >= 0) ? (targets(fd).get(t.type) === id) : !targetEntry(fd, t.type);
-        badge(el, 'vp-nro', nro + ' ×', 'Pinossa ' + nro + '. (1 = alin). Klikkaa numeroa: poista pinosta. Klikkaa vaatetta: väritä tämä.', removeFromStack)
-          .classList.toggle('vp-kohde', isTarget);
-      } else dropBadge(el, 'vp-nro');
+      if (nro) label(el, String(nro), 'Pinossa ' + nro + '. (1 = alin). Klikkaa vaatetta: väritä tämä.');
+      else dropBadge(el, 'vp-nro');
+      if (nro) badge(el, 'vp-minus', '-', 'Poista pinosta', removeFromStack);
+      else dropBadge(el, 'vp-minus');
       if (!nro && id !== primary) badge(el, 'vp-plus', '+', 'Lisää tämä päälle (pinoon)', addToStack);
       else dropBadge(el, 'vp-plus');
     }
@@ -356,7 +384,8 @@
     st.textContent = '.nitro-avatar-editor .layout-grid-item{position:relative}' +
       '.vp-badge{position:absolute;top:1px;z-index:5;min-width:13px;height:13px;padding:0 2px;border-radius:7px;font:bold 10px/13px sans-serif;text-align:center;cursor:pointer;user-select:none;box-shadow:0 0 0 1px #0006}' +
       '.vp-plus{right:1px;background:#3c8d4a;color:#fff;opacity:.85}.vp-plus:hover{opacity:1;background:#4fb35f}' +
-      '.vp-nro{left:1px;background:#ffb300;color:#222}.vp-nro.vp-kohde{background:#2f7fd8;color:#fff;box-shadow:0 0 0 2px #fff}.vp-nro:hover{background:#c9463d;color:#fff}';
+      '.vp-minus{right:1px;background:#c9463d;color:#fff;opacity:.85}.vp-minus:hover{opacity:1;background:#e0554b}' +
+      '.vp-nro{position:absolute;left:3px;top:1px;z-index:5;font:bold 10px/12px sans-serif;color:#fff;text-shadow:0 0 2px #000,0 0 1px #000;pointer-events:none;user-select:none}';
     document.head.appendChild(st);
     document.addEventListener('click', onTileClick, true);
     let warned = false; const t0 = Date.now();
@@ -365,7 +394,7 @@
       if (document.querySelector('.nitro-avatar-editor')) { tryPatchEditor(); markGrid(); }
       if (!rendererDone && !warned && Date.now() - t0 > 120000 && W.NitroDevTools) { warned = true; console.warn(TAG, 'renderöijää ei vielä löytynyt (ei avataria huoneessa?) — yritetään edelleen'); }
     }, 500);
-    api.uninstall = () => { clearInterval(timer); document.removeEventListener('click', onTileClick, true); st.remove(); document.querySelectorAll('.vp-badge').forEach(b => b.remove()); };
+    api.uninstall = () => { clearInterval(timer); document.removeEventListener('click', onTileClick, true); st.remove(); document.querySelectorAll('.vp-badge, .vp-nro').forEach(b => b.remove()); };
     console.info(TAG, VERSION + ' ladattu');
   }
 
