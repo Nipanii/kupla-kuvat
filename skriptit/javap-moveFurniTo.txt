@@ -1,0 +1,8 @@
+# move_rotate-jumi: onko ajossa olevassa RoomItemManagerissa 7-parametrinen moveFurniTo?
+# Aja prod-palvelimella (voi vaatia sudon). Liitä KOKO tuloste takaisin.
+# Rivi joka päättyy "boolean, boolean, boolean);" = metodi on olemassa. Puuttuu = vanha luokka ajossa.
+# 4-parametrinen rivi (…Habbo);) on kontrolli: jos sekään ei näy, polku/prosessi on väärä.
+
+P=$(systemctl show -p MainPID --value daybreak); echo "PID=$P"; tr '\0' ' ' </proc/$P/cmdline; echo; cd /proc/$P/cwd && pwd -P
+CP=$(tr '\0' '\n' </proc/$P/cmdline | grep -x -A1 -e -cp -e -classpath -e -jar | tail -1); echo "CP=$CP"
+javap -cp "$CP" com.eu.habbo.habbohotel.rooms.RoomItemManager | grep moveFurniTo
