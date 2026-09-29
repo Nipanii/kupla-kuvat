@@ -2,10 +2,13 @@
 // @name         Kupla Figuredata-editori
 // @namespace    https://re-lab.local/kupla
 // @version      0.2.0
+// @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/figuredata-editori.user.js
+// @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/figuredata-editori.user.js
+// @homepageURL  https://github.com/Nipanii/kupla-kuvat
 // @match        https://kupla.cc/*
 // @grant        none
 // @run-at       document-start
-// @description  Vaatekaapin päälle: poista vaatteita, muokkaa piilotuksia (hiddenLayers) kuvien kanssa, lisää vaate .nitro-tiedostosta. Muutokset näkyvät vain sinulle (sivun uudelleenlatauksen jälkeen) ja uudet FigureDataISO.json + FigureMapISO.json voi ladata koneelle.
+// @description  Vaatekaapin päälle: poista vaatteita, muokkaa piilotuksia (hiddenLayers) suoraan vaatekaapin omasta ruudukosta (FD-nappi), lisää vaate .nitro-tiedostosta. Muutokset näkyvät vain sinulle (sivun uudelleenlatauksen jälkeen) ja uudet FigureDataISO.json + FigureMapISO.json voi ladata koneelle.
 // ==/UserScript==
 /*
  * Res 2026-09-29 21:2x: "robo voitko tehä figuredata editor userscriptin" · "lyöt sen toho avatar editorin päälle" ·
