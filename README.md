@@ -15,3 +15,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/poke-buzzwole-vertailu.png` — Buzzwole 1x / 1,25x / 1,5x lanczos / 1,5x nearest
 - `kuvat/poke-buzzwole-vertailu2.png` — Buzzwole: lanczos vs scale2x+alas
 - `kuvat/etusivu-A-0930.png` — kupla etusivu mockup A
+- `kuvat/etusivu-B-0930.png` — kupla etusivu mockup B
