@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Kupla vaatepino (figure stack)
 // @namespace    https://re-lab.local/kupla
-// @version      0.4.0
+// @version      0.4.1
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/figure-stack.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/figure-stack.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -369,7 +369,7 @@
       const nro = (i >= 0) ? (i + 1) : ((id === primary && a.length) ? (a.length + 1) : 0); // 1 = alin
       if (nro) label(el, String(nro), 'Pinossa ' + nro + '. (1 = alin). Klikkaa vaatetta: väritä tämä.');
       else dropBadge(el, 'vp-nro');
-      if (nro) badge(el, 'vp-minus', '-', 'Poista pinosta', removeFromStack);
+      if (nro) badge(el, 'vp-minus', '−', 'Poista pinosta', removeFromStack);
       else dropBadge(el, 'vp-minus');
       if (!nro && id !== primary) badge(el, 'vp-plus', '+', 'Lisää tämä päälle (pinoon)', addToStack);
       else dropBadge(el, 'vp-plus');
@@ -382,10 +382,10 @@
     if (prev && prev !== api && typeof prev.uninstall === 'function') prev.uninstall(); // vanha versio samassa sivussa
     const st = document.createElement('style');
     st.textContent = '.nitro-avatar-editor .layout-grid-item{position:relative}' +
-      '.vp-badge{position:absolute;top:1px;z-index:5;min-width:13px;height:13px;padding:0 2px;border-radius:7px;font:bold 10px/13px sans-serif;text-align:center;cursor:pointer;user-select:none;box-shadow:0 0 0 1px #0006}' +
+      '.vp-badge{position:absolute;top:1px;z-index:5;width:13px;height:13px;padding:0;border-radius:50%;font:bold 11px/1 sans-serif;display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none;box-shadow:0 0 0 1px #0006}' +
       '.vp-plus{right:1px;background:#3c8d4a;color:#fff;opacity:.85}.vp-plus:hover{opacity:1;background:#4fb35f}' +
       '.vp-minus{right:1px;background:#c9463d;color:#fff;opacity:.85}.vp-minus:hover{opacity:1;background:#e0554b}' +
-      '.vp-nro{position:absolute;left:3px;top:1px;z-index:5;font:bold 10px/12px sans-serif;color:#fff;text-shadow:0 0 2px #000,0 0 1px #000;pointer-events:none;user-select:none}';
+      '.vp-nro{position:absolute;left:1px;top:1px;z-index:5;min-width:13px;height:13px;padding:0 2px;box-sizing:border-box;border-radius:7px;background:#222c;color:#fff;font:bold 10px/13px sans-serif;text-align:center;pointer-events:none;user-select:none}';
     document.head.appendChild(st);
     document.addEventListener('click', onTileClick, true);
     let warned = false; const t0 = Date.now();

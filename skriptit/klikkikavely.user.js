@@ -4,15 +4,17 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.17.0
+// @version      1.18.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
-// @description  Klikkaus korotetulle pinnalle (palikkalattia, lentokone) kävelyttää sinne eikä maahan pinnan takana. Pinta valitaan pinokorkeuskartasta: hiiren alla lähimpänä kameraa oleva ruudun päällys. Lähettää saman kävelypaketin kuin peli itse.
+// @description  Klikkaus korotetulle pinnalle (palikkalattia, lentokone) kävelyttää sinne eikä maahan pinnan takana. Pinta valitaan pinokorkeuskartasta: hiiren alla lähimpänä kameraa oleva ruudun päällys. Lähettää saman kävelypaketin kuin peli itse. Hahmon valikossa myös Ignoraa + piilota: ignoratut hahmot piiloon huoneesta (vain sinulle); takaisin oman hahmon valikosta (Näytä ignoratut) tai :ignoratut.
 // @kupla-oletus on
 // @author       re-lab
 // ==/UserScript==
 //
+// 1.18.0 (Res 2026-09-29 23:28-23:30): "Ignoraa + piilota" hahmon valikkoon = PR #34 (robo/ignore-hide) userscriptinä: ignoratut
+//   hahmot piiloon huoneesta vain tässä selaimessa (localStorage). Ks. '>>> 1.18.0' alempana.
 // kp 2026-09-27 18:40: "jos tekee korkealle esim sen lentokoneen, lentokoneen lattian painaminen ei ohjaa hahmoa sinne".
 //
 // SYY (lähde D:/kupla-lahde/kupla-cc/client/Nitro_Render_V3/packages/room/src/RoomObjectEventHandler.ts):
@@ -362,8 +364,8 @@
           //   right click toiminto renderin sisällä" -> robo ehdotti "vasen kävelee, oikea osoittaa" -> Res "toi on hyvä").
           //   Pelin oma 3301 UNIT_LOOK (x,y) = sama paketti jonka RoomObjectEventHandler.ts:2210 lähettää kun klikkaat toista
           //   hahmoa, joten kaikki huoneessa näkevät käännöksen ilman skriptiä. Valikko aukeaa kuten ennen.
-          turva(() => { if (!ctx.ruutu) return; const c = yhteys(); if (c && c.sendRawPacket) { c.sendRawPacket(3301, [ctx.ruutu.x | 0, ctx.ruutu.y | 0], 'RoomUnitLookComposer'); VW.__klikkikavelyKatse = (VW.__klikkikavelyKatse || 0) + 1; } }, null);
           const turva = (f, oletus) => { try { return f(); } catch (err) { VW.__klikkikavelyVirhe = String(err); return oletus; } };
+          turva(() => { if (!ctx.ruutu) return; const c = yhteys(); if (c && c.sendRawPacket) { c.sendRawPacket(3301, [ctx.ruutu.x | 0, ctx.ruutu.y | 0], 'RoomUnitLookComposer'); VW.__klikkikavelyKatse = (VW.__klikkikavelyKatse || 0) + 1; } }, null);  // 1.18.0 KORJAUS: turva määritellään ENNEN käyttöä; 1.13.0-1.17.0 kaatui tähän (TDZ ReferenceError) -> oikean klikkauksen valikko ei auennut
           const osion = kohde => valikkoRivit.filter(x => [].concat(x.kohde).includes(kohde) && (!x.nakyy || turva(() => x.nakyy(ctx), false)));
           const ilmoita = (v, virhe) => { const K = VW.kuplaKomennot; if (typeof v === 'string' && v) { if (K && K.ilmoita) K.ilmoita(v, virhe); else console.log('[klikkikävely]', v); } };
           const aja = f => { const v = turva(() => f(ctx), null);
@@ -493,6 +495,81 @@
     nakyy: ctx => !!(ctx.hahmo && ctx.hahmo.nimi && ctx.hahmo.tyyppi === 1 && sdm()),
     nimi: ctx => ignoorattu(ctx.hahmo.nimi) ? 'Poista ignoraus' : 'Ignoraa',
     tee: ctx => { const n = ctx.hahmo.nimi, s = sdm(); if (ignoorattu(n)) { s.unignoreUser(n); return n + ': ignoraus poistettu'; } s.ignoreUser(n); return n + ' ignoorattu'; } });
+  // >>> 1.18.0 IGNORATTUJEN PIILOTUS (Res 2026-09-29 23:28-23:30; userscript-versio PR #34:stä, 0-es/kupla-cc robo/ignore-hide).
+  //   PR:n logiikka (AvatarVisualization.ts): piilossa kun object.type === 'user' JA mallin figure_is_muted-arvossa on
+  //   IGNORED-bitti (2, ObjectAvatarMutedUpdateMessage.IGNORED) JA asetus päällä. Peli pitää bitin itse ajan tasalla huoneeseen
+  //   tullessa, ignoorauksessa ja ignorauksen poistossa, joten tässä yhdistetään vain asetus siihen. Tarkistus JOKAISESSA
+  //   update()-kutsussa (ennen aikarajausta) -> asetuksen vaihto koskee heti myös huoneessa jo olevia.
+  //   Piilotus = get sprites() palauttaa tyhjän listan: RoomSpriteCanvas rakentaa huoneen JA hiiren osumatestin siitä, joten
+  //   piilotettua ei voi klikata eikä hoverata; itse spritet säilyvät koskemattomina näyttämistä varten. updateSpriteCounter++
+  //   saa canvasin keräämään listan uudelleen. Ikkunaheijastus poistetaan (pelin oma updateWindowReflectionSource ajetaan
+  //   oliolla jonka getSprite palauttaa null -> se päätyy omaan removeAvatar-haaraansa; RoomWindowReflectionState ei näy ulos).
+  //   Luokat haetaan huoneen avatarista (nimet: update / sprites / updateWindowReflectionSource / updateSpriteCounter —
+  //   luokkanimet ovat minifioituja, metodinimet eivät). Asetus: localStorage, vain tämä selain.
+  //   RAJA: piilotettua ei voi oikealla klikata -> "Näytä ignoratut" on OMAN hahmon valikossa ja komentona :ignoratut.
+  //   RAJA: huoneen DOM-kerros (chat-kupla jos palvelin sen lähettää, avoin infolaatikko) ei ole rendererin spritejä.
+  const PIILO_LS = 'kupla.klikkikavely.piilotaIgnoratut';
+  const IGNORED_BIT = 2;
+  let piilotaIgnoratut = false; try { piilotaIgnoratut = VW.localStorage.getItem(PIILO_LS) === '1'; } catch (e) { /* ei tallennusta */ }
+  const asetaPiilotus = on => { piilotaIgnoratut = !!on; try { VW.localStorage.setItem(PIILO_LS, on ? '1' : '0'); } catch (e) { /* ei tallennusta */ } };
+  const ignoratutNimet = () => { try { const m = sdm()._ignoredUsersManager; return (m && m._ignoredUsers) ? m._ignoredUsers.slice() : []; } catch (e) { return []; } };
+  const EI_SPRITEJA = [];
+  let piiloPatch = null; // { ok, virhe }
+  function patchaaPiilotus() {
+    if (piiloPatch) return piiloPatch.ok;
+    const r = RE(); if (!r || typeof r.getRoomObjectByIndex !== 'function') return false;
+    const rid = r._activeRoomId; let vis = null;
+    const n = (rid != null && r.getTotalObjectsForManager) ? r.getTotalObjectsForManager(rid, 100) : 0;
+    for (let i = 0; i < n && !vis; i++) { const o = r.getRoomObjectByIndex(rid, i, 100); if (o && o.visualization && o.visualization._avatarImage) vis = o.visualization; }
+    if (!vis) return false;
+    const P = Object.getPrototypeOf(vis);
+    if (P.__kkPiilotus) { piiloPatch = { ok: true }; return true; }
+    let q = Object.getPrototypeOf(P), superSprites = null;
+    for (; q && !superSprites; q = Object.getPrototypeOf(q)) { const d = Object.getOwnPropertyDescriptor(q, 'sprites'); if (d && d.get) superSprites = d.get; }
+    const puuttuu = ['update', 'updateWindowReflectionSource', 'getSprite'].filter(m => typeof P[m] !== 'function');
+    if (!superSprites) puuttuu.push('sprites-getter');
+    if (!('updateSpriteCounter' in vis)) puuttuu.push('updateSpriteCounter');
+    if (puuttuu.length) { piiloPatch = { ok: false, virhe: puuttuu.join(', ') }; console.error('[klikkikävely] VIRHE: ignoraattujen piilotus ei käytössä, puuttuu:', piiloPatch.virhe); return false; }
+    const origUpdate = P.update, origHeijastus = P.updateWindowReflectionSource;
+    const poistaHeijastus = v => { try { origHeijastus.call(Object.create(v, { getSprite: { value: () => null } })); } catch (e) { /* heijastukset pois käytöstä */ } };
+    const paivitaTila = v => {
+      const o = v.object; if (!o || !o.model) return;
+      const mute = o.model.getValue('figure_is_muted') || 0;
+      const piiloon = (o.type === 'user') && ((mute & IGNORED_BIT) !== 0) && piilotaIgnoratut;
+      if (piiloon === !!v.__kkPiilossa) return;
+      v.__kkPiilossa = piiloon;
+      v.updateSpriteCounter++;                 // canvas kerää tämän olion spritet uudelleen seuraavalla kierroksella
+      if (piiloon) poistaHeijastus(v); else origHeijastus.call(v);
+    };
+    P.update = function () { try { paivitaTila(this); } catch (e) { /* ei saa kaataa renderöintiä */ } return origUpdate.apply(this, arguments); };
+    P.updateWindowReflectionSource = function () { if (this.__kkPiilossa) { poistaHeijastus(this); return; } return origHeijastus.apply(this, arguments); };
+    Object.defineProperty(P, 'sprites', { configurable: true, get: function () { return this.__kkPiilossa ? EI_SPRITEJA : superSprites.call(this); } });
+    P.__kkPiilotus = true;
+    piiloPatch = { ok: true };
+    return true;
+  }
+  // Yksi toteutus per sivu: jos skripti ajetaan uudelleen (konsoli/injektio), käytetään jo patchattua, ettei kaksi eri
+  // sulkeumaa kirjoita samaa __kkPiilossa-kenttää eri asetuksella.
+  const PT = (VW.__kkPiilotus && typeof VW.__kkPiilotus.aseta === 'function') ? VW.__kkPiilotus
+    : (VW.__kkPiilotus = { patchaa: patchaaPiilotus, aseta: asetaPiilotus, paalla: () => piilotaIgnoratut, tila: () => piiloPatch });
+  if (PT.patchaa === patchaaPiilotus) { const piiloAjastin = setInterval(() => { if (patchaaPiilotus()) clearInterval(piiloAjastin); }, 1000); }
+  (VW.kuplaValikkoJono = VW.kuplaValikkoJono || []).push(
+    { kohde: 'hahmo', lisaosa: 'Klikkikävely',
+      nakyy: ctx => !!(ctx.hahmo && ctx.hahmo.nimi && ctx.hahmo.tyyppi === 1 && sdm()) && !(ignoorattu(ctx.hahmo.nimi) && PT.paalla()),
+      nimi: ctx => ignoorattu(ctx.hahmo.nimi) ? 'Piilota ignoratut' : 'Ignoraa + piilota',
+      tee: ctx => { const n = ctx.hahmo.nimi; PT.patchaa(); PT.aseta(true);
+        if (ignoorattu(n)) return 'ignoratut piilotettu (näytä: oma hahmo -> Näytä ignoratut)';
+        sdm().ignoreUser(n); return n + ' ignoorattu ja piilotettu'; } },
+    { kohde: 'oma', lisaosa: 'Klikkikävely',
+      nakyy: () => PT.paalla() || ignoratutNimet().length > 0,
+      nimi: () => PT.paalla() ? 'Näytä ignoratut' : 'Piilota ignoratut',
+      tee: () => { PT.patchaa(); PT.aseta(!PT.paalla()); return PT.paalla() ? 'ignoratut piilotettu' : 'ignoratut näkyvät taas'; } });
+  (VW.kuplaKomennotJono = VW.kuplaKomennotJono || []).push([['ignoratut'],
+    (teksti, sanat) => { const a = String((sanat && sanat[0]) || '').toLowerCase();
+      if (a === 'piilota' || a === 'näytä' || a === 'nayta') { PT.patchaa(); PT.aseta(a === 'piilota'); }
+      return 'ignoratut: ' + (PT.paalla() ? 'piilossa' : 'näkyvissä') + ' · :ignoratut piilota | :ignoratut näytä'; },
+    'ignoraattujen hahmojen piilotus huoneesta (vain sinulle)', 'Klikkikävely']);
+  // <<< 1.18.0
   (VW.kuplaKomennotJono = VW.kuplaKomennotJono || []).push([['kursori', 'cursor'],
     (teksti, sanat) => { const a = String((sanat && sanat[0]) || '').toLowerCase(); return a === 'iso' || a === 'pieni' ? asetaKursori(a) : 'pinnan kursori nyt: ' + tyyli + ' · :kursori iso | :kursori pieni'; },
     'pinnan kursorin tyyli: iso (pelin täysi ruutu) tai pieni (sininen korkeusneliö)', 'Klikkikävely']);
