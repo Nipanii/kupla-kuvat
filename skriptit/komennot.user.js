@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         Kupla Komennot
 // @namespace    https://re-lab.local/kupla
-// @version      1.4.0
+// @version      1.6.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/komennot.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/komennot.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
 // @match        https://kupla.cc/*
 // @grant        none
 // @run-at       document-idle
-// @description  Oma komentokäsittelijä chattiin: lisäosien :komennot siepataan ennen chattia, eivät lähde huoneeseen. :komennot listaa kaikki. Sisältää :mimic <nimi> (kopioi asun itsellesi — huoneesta tai 1210-haulla mistä tahansa) ja :tp <x> <y> | <nimi> (Superkyvyt-teleport).
+// @description  Oma komentokäsittelijä chattiin: lisäosien :komennot siepataan ennen chattia, eivät lähde huoneeseen. :komennot listaa kaikki. Sisältää :mimic <nimi> (kopioi asun itsellesi, huoneesta tai 1210-haulla mistä tahansa) ja :tp <x> <y> | <nimi> (Superkyvyt-teleport).
 // @kupla-oletus on
 // ==/UserScript==
 /*
@@ -25,6 +25,8 @@
  * RAJA: :mimic on CLIENT-puolen korvike palvelimen :mimicille (jota esim. prinsessa sonalla ei ole): se lähettää 2730
  *   USER_FIGURE omalle hahmolle. Palvelin voi hylätä asun jos siinä on kerho-/rajoitettuja osia.
  * RAJA: :tp vaatii Superkyvyt-lisäosan (window.__kt.teleport) ja palvelin päättää onnistuuko (7016 internal write).
+ * 1.5.1 (kp 2026-09-28 04:38 "ei em dasheja valikoihin niist tulee nuottiavain"): pelin fontti piirtää ajatusviivan nuottiavaimena,
+ *   joten näytettävistä teksteistä (:komennot-lista, ilmoitukset, @description) ajatusviivat pois: " - ", "," tai ":".
  */
 (function () {
   'use strict';
@@ -77,7 +79,7 @@
     return true;
   }
 
-  window.kuplaKomennot = { __versio: '1.4.0', lisaa, lista, aja, ilmoita };
+  window.kuplaKomennot = { __versio: '1.6.0', lisaa, lista, aja, ilmoita };
   const jono = window.kuplaKomennotJono = window.kuplaKomennotJono || [];
   for (const x of jono.splice(0)) { try { lisaa(...x); } catch (e) { console.warn('[komennot] jono', e); } }
   jono.push = (...xs) => { for (const x of xs) lisaa(...x); return 0; };
@@ -150,11 +152,11 @@
     const u = hahmot(h).find(x => x && x.roomIndex === h.oma); return u && String(u.sex || '').toUpperCase().startsWith('F') ? 'F' : 'M';
   }
 
-  lisaa(['komennot', 'apua'], () => lista().map(k => ':' + k.nimet.join(' / :') + (k.ohje ? ' — ' + k.ohje : '')
+  lisaa(['komennot', 'apua'], () => lista().map(k => ':' + k.nimet.join(' / :') + (k.ohje ? ' - ' + k.ohje : '')
     + (k.lisaosa ? '  [' + k.lisaosa + ']' : '')).join('\n'), 'näyttää kaikki komennot', 'Komennot');
 
   lisaa(['mimic', 'matki'], (teksti) => {
-    if (!teksti) return ':mimic <nimi> [m|f] — kopioi hahmon asun sinulle (huoneesta tai haulla mistä tahansa)';
+    if (!teksti) return ':mimic <nimi> [m|f] - kopioi hahmon asun sinulle (huoneesta tai haulla mistä tahansa)';
     const h = huone(); if (!h) throw new Error('et ole huoneessa');
     let pakko = null;   // ":mimic nimi f" pakottaa sukupuolen
     const mm = /^(.*\S)\s+([mf])$/i.exec(teksti); if (mm) { teksti = mm[1]; pakko = mm[2].toUpperCase(); }
@@ -187,7 +189,7 @@
       x = Math.round(l.x); y = Math.round(l.y);
     } else return ':tp <x> <y>  tai  :tp <nimi>';
     kt.teleport(x, y);
-    return 'teleport (' + x + ',' + y + ') lähetetty — tulos Superkyvyt-paneelissa';
+    return 'teleport (' + x + ',' + y + ') lähetetty, tulos Superkyvyt-paneelissa';
   }, 'teleporttaa ruutuun tai hahmon luo (vaatii Superkyvyt)', 'Komennot');
 
   // 1.2.0 oikean klikkauksen rivit (klikkikävelyn 1.9.0 valikko; kp 00:44 #592 "right clickaamal pelaajaa siel on mimic",
@@ -198,6 +200,46 @@
     { kohde: 'hahmo', nimi: 'Kopioi asu (mimic)', nakyy: ctx => ctx.hahmo.tyyppi !== 2, tee: ctx => { aja(':mimic ' + ctx.hahmo.nimi); }, lisaosa: 'Komennot' },
     { kohde: 'hahmo', nimi: 'Teleporttaa luokse', nakyy: tpOn, tee: ctx => { aja(':tp ' + ctx.hahmo.x + ' ' + ctx.hahmo.y); }, lisaosa: 'Komennot' },
     { kohde: 'ruutu', nimi: 'Teleporttaa tähän', nakyy: tpOn, tee: ctx => { aja(':tp ' + ctx.ruutu.x + ' ' + ctx.ruutu.y); }, lisaosa: 'Komennot' });
+
+  // 1.5.0 (kp 2026-09-28 04:10 #681 "lisää right click menuun … avaa tän yksityisviesti ikkunan sen pelaajan kanssa"):
+  //   pelin avaaja OpenMessengerChat -> CreateLinkEvent('friends-messenger/<id>') on moduulin sisäinen (LinkTracker.ts, ei globaalia)
+  //   ja chatin event:-linkit on rajattu luotettuihin (ChatLinkEvent.ts). Siksi rivi käyttää pelin OMAA kaverilistaa: avaa sen
+  //   (työkalupalkin icon-friendall), etsii rivin nimellä ja painaa sen viestinappia (.hfl-action.chat -> OpenMessengerChat(friend.id),
+  //   FriendsListGroupItemView.tsx:65). Pelissä yv toimii vain kavereille -> ei-kaverille ilmoitus.
+  async function avaaYv(nimi) {
+    const odota = ms => new Promise(r => setTimeout(r, ms));
+    const etsiRivi = () => [...document.querySelectorAll('.hfl-friend-name')].find(e => e.textContent.trim().toLowerCase() === String(nimi).toLowerCase());
+    let rivi = etsiRivi(), avattiin = false;
+    if (!rivi) {
+      const nappi = document.querySelector('.icon-friendall'); if (!nappi) return 'kaverilistan nappia ei löytynyt';
+      nappi.click(); avattiin = true;
+      for (let i = 0; i < 20 && !(rivi = etsiRivi()); i++) await odota(100);
+    }
+    const chat = rivi && rivi.closest('*:has(> .hfl-friend-actions)') && rivi.closest('*:has(> .hfl-friend-actions)').querySelector('.hfl-action.chat');
+    if (!chat) { if (avattiin) { const n = document.querySelector('.icon-friendall'); if (n) n.click(); } return nimi + ' ei ole kaverilistallasi, pelissä yv toimii vain kavereille'; }
+    chat.click();
+    if (avattiin) { await odota(150); const n = document.querySelector('.icon-friendall'); if (n) n.click(); }
+    return '';
+  }
+  window.kuplaValikkoJono.push({ kohde: 'hahmo', nimi: 'Yksityisviesti', nakyy: ctx => ctx.hahmo.tyyppi === 1 && !ctx.hahmo.oma, tee: ctx => avaaYv(ctx.hahmo.nimi), lisaosa: 'Komennot' });
+  lisaa(['yv', 'pm'], (teksti) => teksti ? avaaYv(teksti.trim()) : 'käyttö: :yv <nimi>', 'avaa yksityisviesti-ikkunan kaverin kanssa', 'Komennot');
+
+  // 1.6.0 (Res 2026-09-29 21:22 "voiks lisää rightclick scriptiin sen ignore kun sille ei oo mitään nappia missään"):
+  //   pelin omat composerit nimellä: 1117 USER_IGNORE [nimi] ja 2061 USER_UNIGNORE [nimi] (OutgoingHeader.ts:345-346,
+  //   IgnoreUserComposer.ts = [username]). Palvelin (IgnoreUserMessageEvent.java) hakee kohteen SAMASTA huoneesta nimellä ja
+  //   vastaa 207 IgnoreResult, jonka pelin oma IgnoredUsersManager käsittelee. Unignore toimii myös huoneen ulkopuolelle
+  //   (kupla-fixes UnignoreByName). Ignore-tilaa ei voi lukea userscriptistä, joten valikossa on molemmat rivit.
+  const ignore = (nimi, pois) => {
+    const h = huone(); if (!h) throw new Error('et ole huoneessa');
+    const c = yhteys(h.rsm); if (!c || typeof c.sendRawPacket !== 'function') throw new Error('yhteyttä ei löytynyt');
+    c.sendRawPacket(pois ? 2061 : 1117, [String(nimi)], pois ? 'kupla-unignore' : 'kupla-ignore');
+    return pois ? 'ignoraus poistettu: ' + nimi : 'ignorattu: ' + nimi + ' (hänen viestinsä eivät enää näy sinulle)';
+  };
+  lisaa(['ignore'], (teksti) => teksti ? ignore(teksti.trim(), false) : 'käyttö: :ignore <nimi> (hahmon pitää olla huoneessa)', 'piilota pelaajan viestit sinulta', 'Komennot');
+  lisaa(['unignore'], (teksti) => teksti ? ignore(teksti.trim(), true) : 'käyttö: :unignore <nimi>', 'poista ignoraus', 'Komennot');
+  window.kuplaValikkoJono.push(
+    { kohde: 'hahmo', nimi: 'Ignoraa', nakyy: ctx => ctx.hahmo.tyyppi === 1 && !ctx.hahmo.oma, tee: ctx => ignore(ctx.hahmo.nimi, false), lisaosa: 'Komennot' },
+    { kohde: 'hahmo', nimi: 'Poista ignoraus', nakyy: ctx => ctx.hahmo.tyyppi === 1 && !ctx.hahmo.oma, tee: ctx => ignore(ctx.hahmo.nimi, true), lisaosa: 'Komennot' });
 
   // 1.3.0 (Res 2026-09-28 02:55 "totta istuminen omasta hahmost · tai makaaminen", kp "diippii pohdintaa" oikean klikkauksen
   //   valikkoon). Istu = 2235 ChangePostureMessageEvent (palvelin: makeSit, ei lue argumenttia — ChangePostureMessageEvent.java).
