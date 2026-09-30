@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.21.0
+// @version      1.21.1
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -13,6 +13,7 @@
 // @author       re-lab
 // ==/UserScript==
 //
+// 1.21.1 (kp 30.9. 12:11 "piilotus ei tehny mitää", toimii ilman lisäosia): oma sprites-getteri ohitti natiivin (AvatarVisualization.ts:1174 NO_SPRITES kun IGNORED|HIDDEN) -> nyt käärii sen.
 // 1.18.0 (Res 2026-09-29 23:28-23:30): "Ignoraa + piilota" hahmon valikkoon = PR #34 (robo/ignore-hide) userscriptinä: ignoratut
 //   hahmot piiloon huoneesta vain tässä selaimessa (localStorage). Ks. '>>> 1.18.0' alempana.
 // kp 2026-09-27 18:40: "jos tekee korkealle esim sen lentokoneen, lentokoneen lattian painaminen ei ohjaa hahmoa sinne".
@@ -553,7 +554,7 @@
     if (!vis) return false;
     const P = Object.getPrototypeOf(vis);
     if (P.__kkPiilotus) { piiloPatch = { ok: true }; return true; }
-    let q = Object.getPrototypeOf(P), superSprites = null;
+    let q = P, superSprites = null;   // 1.21.1: P ITSE ensin — natiivi piilotus (Res 30.9., HIDDEN-bitti) on P:n omassa sprites-getterissä; ohitus rikkoi sen
     for (; q && !superSprites; q = Object.getPrototypeOf(q)) { const d = Object.getOwnPropertyDescriptor(q, 'sprites'); if (d && d.get) superSprites = d.get; }
     const puuttuu = ['update', 'updateWindowReflectionSource', 'getSprite'].filter(m => typeof P[m] !== 'function');
     if (!superSprites) puuttuu.push('sprites-getter');
