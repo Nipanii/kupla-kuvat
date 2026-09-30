@@ -1,0 +1,34 @@
+KUVISLUOKAN ARVOITUS (prinsessa sonan pakohuone) — vastaus: VÄLITUNNILLE
+
+TARINA
+Kuvisope: "Tunti ei lopu ennen kuin maalaukset on valmiit!" ...ja lähti vessaan.
+Maali on loppu. Jokaisen istuimen kohdalla lukee kaksi väriä: sekoita ne päässäsi.
+Opettajan pöydällä on lappu (väriavain). Kirjaimet istuinten järjestyksessä = salasana.
+
+ISTUIMET (järjestys: rivi 1 vasemmalta oikealle, sitten rivi 2)
+ 1. keltainen + sininen
+ 2. keltainen + punainen
+ 3. punainen + sininen
+ 4. punainen + valkoinen
+ 5. musta + valkoinen
+ 6. sininen + valkoinen
+ 7. oranssi + sininen
+ 8. oranssi + sininen
+ 9. punainen + valkoinen
+10. punainen + sininen
+11. punainen + sininen
+12. sininen + vihreä
+
+OPEN LAPPU (väriavain)
+ vihreä = V
+ oranssi = Ä
+ violetti = L
+ vaaleanpunainen = I
+ harmaa = T
+ vaaleansininen = U
+ ruskea = N
+ turkoosi = E
+
+TARKISTUS: vihreä oranssi violetti vaaleanpunainen harmaa vaaleansininen ruskea ruskea vaaleanpunainen violetti violetti turkoosi
+         =  V      Ä       L        I               T      U              N      N      I               L        L        E
+Kun pelaaja sanoo "välitunnille" (ope-lapun luona / ovella) -> ovi auki / teleport välitunnille.
