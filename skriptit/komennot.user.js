@@ -1,10 +1,7 @@
 // ==UserScript==
 // @name         Kupla Komennot
 // @namespace    https://re-lab.local/kupla
-// @version      1.6.0
-// @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/komennot.user.js
-// @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/komennot.user.js
-// @homepageURL  https://github.com/Nipanii/kupla-kuvat
+// @version      1.7.0
 // @match        https://kupla.cc/*
 // @grant        none
 // @run-at       document-idle
@@ -79,7 +76,7 @@
     return true;
   }
 
-  window.kuplaKomennot = { __versio: '1.6.0', lisaa, lista, aja, ilmoita };
+  window.kuplaKomennot = { __versio: '1.7.0', lisaa, lista, aja, ilmoita };
   const jono = window.kuplaKomennotJono = window.kuplaKomennotJono || [];
   for (const x of jono.splice(0)) { try { lisaa(...x); } catch (e) { console.warn('[komennot] jono', e); } }
   jono.push = (...xs) => { for (const x of xs) lisaa(...x); return 0; };
@@ -210,15 +207,21 @@
     const odota = ms => new Promise(r => setTimeout(r, ms));
     const etsiRivi = () => [...document.querySelectorAll('.hfl-friend-name')].find(e => e.textContent.trim().toLowerCase() === String(nimi).toLowerCase());
     let rivi = etsiRivi(), avattiin = false;
+    // 1.7.0 (kp 2026-09-30 03:10 "yksityisviesti right clickil vilauttaa sitä kaverilistaa eka"): lista piiloon (visibility, ei
+    //   display -> React-rivit ja napit ovat silti DOMissa ja .click() toimii) siksi aikaa kun se avataan vain yv:tä varten.
+    let piilo = null;
+    const pois = () => { if (piilo) { piilo.remove(); piilo = null; } };
     if (!rivi) {
       const nappi = document.querySelector('.icon-friendall'); if (!nappi) return 'kaverilistan nappia ei löytynyt';
+      piilo = document.createElement('style'); piilo.textContent = '.habbo-friend-list{visibility:hidden!important}'; document.head.appendChild(piilo);
       nappi.click(); avattiin = true;
       for (let i = 0; i < 20 && !(rivi = etsiRivi()); i++) await odota(100);
     }
     const chat = rivi && rivi.closest('*:has(> .hfl-friend-actions)') && rivi.closest('*:has(> .hfl-friend-actions)').querySelector('.hfl-action.chat');
-    if (!chat) { if (avattiin) { const n = document.querySelector('.icon-friendall'); if (n) n.click(); } return nimi + ' ei ole kaverilistallasi, pelissä yv toimii vain kavereille'; }
+    if (!chat) { if (avattiin) { const n = document.querySelector('.icon-friendall'); if (n) n.click(); setTimeout(pois, 200); } return nimi + ' ei ole kaverilistallasi, pelissä yv toimii vain kavereille'; }
     chat.click();
-    if (avattiin) { await odota(150); const n = document.querySelector('.icon-friendall'); if (n) n.click(); }
+    if (avattiin) { await odota(150); const n = document.querySelector('.icon-friendall'); if (n) n.click(); await odota(200); }
+    pois();
     return '';
   }
   window.kuplaValikkoJono.push({ kohde: 'hahmo', nimi: 'Yksityisviesti', nakyy: ctx => ctx.hahmo.tyyppi === 1 && !ctx.hahmo.oma, tee: ctx => avaaYv(ctx.hahmo.nimi), lisaosa: 'Komennot' });
