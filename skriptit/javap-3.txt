@@ -1,0 +1,1 @@
+javap -cp /opt/daybreak-runtime/Habbo-4.0.3-beta-jar-with-dependencies.jar com.eu.habbo.habbohotel.rooms.RoomItemManager | grep moveFurniTo
