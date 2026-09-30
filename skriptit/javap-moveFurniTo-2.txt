@@ -1,8 +1,9 @@
-# Kupla: onko ajossa olevassa palvelimessa wired2:n 7-param moveFurniTo? Liitä KOKO tuloste.
-P=$(pgrep -f 'java.*' | head -1); echo "PID=$P"
-tr '\0' ' ' </proc/$P/cmdline; echo
-cd /proc/$P/cwd && echo "CWD=$(pwd -P)"
-for j in $(tr '\0' '\n' </proc/$P/cmdline | tr ':' '\n' | grep '\.jar$') $(find . -maxdepth 3 -name '*.jar' 2>/dev/null); do
-  unzip -l "$j" 2>/dev/null | grep -q 'habbohotel/rooms/RoomItemManager.class' && { echo "JAR=$j"; javap -cp "$j" com.eu.habbo.habbohotel.rooms.RoomItemManager | grep moveFurniTo; }
+# Kupla: onko ajossa olevassa palvelimessa wired2:n 7-param moveFurniTo? Käy läpi KAIKKI java-prosessit. Liitä KOKO tuloste.
+for P in $(pgrep java); do
+  echo "== PID=$P: $(tr '\0' ' ' </proc/$P/cmdline | cut -c1-200)"
+  cd /proc/$P/cwd || continue; echo "CWD=$(pwd -P)"
+  for j in $(tr '\0' '\n' </proc/$P/cmdline | tr ':' '\n' | grep '\.jar$') $(find . -maxdepth 3 -name '*.jar' 2>/dev/null); do
+    unzip -l "$j" 2>/dev/null | grep -q 'habbohotel/rooms/RoomItemManager.class' && { echo "JAR=$j"; javap -cp "$j" com.eu.habbo.habbohotel.rooms.RoomItemManager | grep moveFurniTo; }
+  done
 done
 echo "valmis"
