@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.18.0
+// @version      1.21.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikkikavely.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -76,7 +76,20 @@
     const cv = r.getRoomInstanceRenderingCanvas(roomId, 1), inst = r.getRoomInstance(roomId); if (!cv || !inst) return null;
     const rect = canvasEl.getBoundingClientRect(), kx = rect.width / (cv._width || rect.width), ky = rect.height / (cv._height || rect.height);
     let paras = null;
-    for (const o of inst.getRoomObjectsForCategory(100)) {
+    // 1.19.0 (kp 2026-09-30 03:13 "right click kameran kierron jälkeen ittee osuu aina tohon istuvaan edessä olevaan pelaajaan vaik
+    //   hover näyttää oikeen nimen"): alimman rajalaatikon valinta ei ole päällimmäinen kun hahmot ovat päällekkäin. Ensin sama
+    //   PIKSELItesti kuin esinePisteessa (pelin oma osumajärjestys, jota hover-nimikin käyttää); rajalaatikko vain varalle.
+    if (typeof cv.getExtendedSprite === 'function' && cv._activeSpriteCount > 0) {
+      const s0 = cv._scale || 1, px = Math.trunc(((cx - rect.left) / kx - (cv._screenOffsetX || 0)) / s0), py = Math.trunc(((cy - rect.top) / ky - (cv._screenOffsetY || 0)) / s0);
+      const kartta = new Map(); for (const u of inst.getRoomObjectsForCategory(100)) kartta.set(String(u.instanceId), u);
+      for (let i = cv._activeSpriteCount - 1; i >= 0 && !paras; i--) {
+        const sp = cv.getExtendedSprite(i); if (!sp || sp.skipMouseHandling) continue;
+        const o = kartta.get(sp.label); if (!o) continue;
+        let osuu = false; try { osuu = sp.containsPoint({ x: px - sp.x, y: py - sp.y }); } catch (e) {}
+        if (osuu) paras = { o, ala: 0 };
+      }
+    }
+    if (!paras) for (const o of inst.getRoomObjectsForCategory(100)) {
       let bb = null; try { bb = r.getRoomObjectBoundingRectangle(roomId, o.id, 100, 1); } catch (e) {}
       if (!bb || !(bb.width > 0)) continue;
       const x0 = rect.left + bb.x * kx, y0 = rect.top + bb.y * ky, x1 = x0 + bb.width * kx, y1 = y0 + bb.height * ky;
@@ -333,6 +346,8 @@
       document.addEventListener('contextmenu', e => {
         try {
           const t = e.target; if (!t || t.tagName !== 'CANVAS' || !t.onmousedown) return;   // vain huoneen canvas (RoomView asettaa onmousedown)
+          // 1.20.0 Res 2026-09-30 09:13-09:16: natiivi right click -valikko (PR #55) on nyt clientissa -> tämä väistää, ettei aukea kahta valikkoa.
+          { const r0 = RE(); if (r0 && r0.objectEventHandler && typeof r0.objectEventHandler.getSurfaceWalkOptions === 'function') return; }
           const r = RE(), hh = r && r._roomObjectEventHandler, roomId = r && r.activeRoomId; if (!hh || roomId == null || roomId < 0) return;
           if (r.isPlayingGame && r.isPlayingGame()) return;
           e.preventDefault(); sulje();
@@ -364,6 +379,7 @@
           //   right click toiminto renderin sisällä" -> robo ehdotti "vasen kävelee, oikea osoittaa" -> Res "toi on hyvä").
           //   Pelin oma 3301 UNIT_LOOK (x,y) = sama paketti jonka RoomObjectEventHandler.ts:2210 lähettää kun klikkaat toista
           //   hahmoa, joten kaikki huoneessa näkevät käännöksen ilman skriptiä. Valikko aukeaa kuten ennen.
+          //   🔴 2026-09-30 03:25 MITATTU TOISIN: kp istui, paketti lähti (__klikkikavelyKatse 1), robo EI nähnyt käännöstä. "näkevät" oli lähdepäätelmä, ei mittaus — istuessa palvelin ei ehkä käännä; seisten mittaamatta.
           const turva = (f, oletus) => { try { return f(); } catch (err) { VW.__klikkikavelyVirhe = String(err); return oletus; } };
           turva(() => { if (!ctx.ruutu) return; const c = yhteys(); if (c && c.sendRawPacket) { c.sendRawPacket(3301, [ctx.ruutu.x | 0, ctx.ruutu.y | 0], 'RoomUnitLookComposer'); VW.__klikkikavelyKatse = (VW.__klikkikavelyKatse || 0) + 1; } }, null);  // 1.18.0 KORJAUS: turva määritellään ENNEN käyttöä; 1.13.0-1.17.0 kaatui tähän (TDZ ReferenceError) -> oikean klikkauksen valikko ei auennut
           const osion = kohde => valikkoRivit.filter(x => [].concat(x.kohde).includes(kohde) && (!x.nakyy || turva(() => x.nakyy(ctx), false)));
@@ -464,6 +480,19 @@
         return orig.call(this, scale, layerId);
       };
       v.__kkKursori = true;
+      // 1.21.0 (Res 2026-09-30 09:20 "päälle kävelemiselle pitäis näkyä se sininen selection tile eikä normi", 09:24 "se
+      //   olemassaoleva joka näkyy kaman päällä"): pelin logiikka vaihtaa korkeusmerkkiin (tila 6) vain kun korkeus > 0.8, joten
+      //   matalalla pinnalla näkyi tavallinen lattiaruutu. Nyt mikä tahansa pinta (korkeus > 0.05) -> tila 6. Lattia = korkeus 0.
+      const lg = o.logic;
+      if (lg && !lg.__kkPinta && typeof lg.processUpdateMessage === 'function') {
+        const origUpd = lg.processUpdateMessage;
+        lg.processUpdateMessage = function (msg) {
+          const tulos = origUpd.apply(this, arguments);
+          try { if (msg && msg.visible && o.getState(0) === 0 && (o.model.getValue('tile_cursor_height') || 0) > 0.05) o.setState(6, 0); } catch (e) {}
+          return tulos;
+        };
+        lg.__kkPinta = true;
+      }
     } catch (e) { VW.__klikkikavelyVirhe = String(e); }
   }
   setInterval(paikkaaKursori, 1000);
