@@ -1,5 +1,5 @@
 {
-  "uusin": "elsa",
+  "uusin": "kuvisope",
   "asut": {
     "täti": {
       "figure": "hr-3273-40.hd-600-1.ch-225-76.cc-3572-1408.lg-3006-82.sh-3089-82.ea-3727",
@@ -15,6 +15,11 @@
       "figure": "hr-9534-31.hd-600-20.he-3358-71.ch-225-71.lg-3061-82.sh-3089-1408.ca-3292-82",
       "gender": "F",
       "kuvaus": "Elsa"
+    },
+    "kuvisope": {
+      "figure": "hr-3273-45.hd-600-1.ch-225-92.cc-11670-1408.lg-3006-110.sh-3089-82.ha-11667-1408",
+      "gender": "F",
+      "kuvaus": "Kuvis ope, taiteilija (nainen)"
     }
   }
 }
