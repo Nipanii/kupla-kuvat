@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Kupla Datajako
 // @namespace    https://re-lab.local/kupla
-// @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/datajako.user.js
-// @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/datajako.user.js
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.19.2
+// @version      0.19.4
+// @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/datajako.user.js
+// @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/datajako.user.js
+// @homepageURL  https://github.com/Nipanii/kupla-kuvat
 // @description  Salattu chat + tiedostojako asun (figure) kautta. Vain samassa hotellihuoneessa. Ei palvelinmuutoksia.
 // @kupla-oletus on
 // @author       re-lab
@@ -53,7 +54,7 @@
     if (len > n - 4 || n - 4 - len > 3) return null;
     return buf.slice(4, 4 + len);
   }
-  const VERSIO = '0.19.2';   /* pida sama kuin @version: kerrotaan kuplaDatajako.versio, jotta nakee kumpi versio kussakin clientissa pyorii */
+  const VERSIO = '0.19.4';   /* pida sama kuin @version: kerrotaan kuplaDatajako.versio, jotta nakee kumpi versio kussakin clientissa pyorii */
   const TE = new TextEncoder(), TD = new TextDecoder();
   // kehys: [tyyppi u8][otsikon pituus u16][otsikko JSON][runko]
   const T = { TEKSTI: 1, PALA: 2, POISTA: 3, TARVITSEN: 4, TOIMINTO: 5, KUITTAUS: 6, LASNA: 7, KUTSU: 8, HISTORIA: 9, TARJOUS: 10, LISAOSAT: 11 };
@@ -1154,7 +1155,7 @@
           if (oso && oso.k === 'ui' && oso.avaa && oso.avaa.length) nappi('Avaa ja osoita', () => { if (!confirm(v.from + ' klikkaisi puolestasi näitä (SINUN clientissäsi):' + NL + NL + oso.avaa.map((a, i) => (i + 1) + '. ' + (a.teksti || a.sel)).join(NL) + NL + NL + 'Jatketaanko?')) return; v.tulos = ajaToiminto(v.t, v.from, true, v); piirra(); });
           if (v.t.s && v.t.a !== 'walk' && v.t.a !== 'osoita') { const kk = nappi('📋 Kopioi koodi', () => kopioi(v.t.s, kk), 'btn-secondary'); }
           if (oso && oso.k === 'ui') nappi('kopioi valitsin', () => { try { navigator.clipboard.writeText(oso.sel || ''); } catch (x) {} }, 'btn-secondary');
-          if (!v.kumoa) nappi('▶', () => { if (TOIMINNOT[v.t.a].vaarallinen && !v.oma && !confirm(v.from + ' haluaa ajaa tämän SINUN clientissäsi:' + NL + NL + v.t.s.slice(0, 600) + (v.t.s.length > 600 ? NL + '…' : '') + (kumoaKoodi(v.t) ? NL + NL + 'Kumoa-koodi:' + NL + kumoaKoodi(v.t).slice(0, 300) : NL + NL + 'Kumoa-koodia ei ole: muutos kumoutuu vain jos koodi käyttää dj-apuria tai palauttaa funktion; muuten sivun uudelleenlataus.') + NL + NL + 'Ajetaanko? Aja vain jos luotat lähettäjään ja ymmärrät koodin.')) return; v.tulos = ajaToiminto(v.t, v.from, false, v); piirra(); });
+          if (!v.kumoa) nappi('▶', () => { if (TOIMINNOT[v.t.a].vaarallinen && !v.oma && !ase.auto[v.from] && !confirm(v.from + ' haluaa ajaa tämän SINUN clientissäsi:' + NL + NL + v.t.s.slice(0, 600) + (v.t.s.length > 600 ? NL + '…' : '') + (kumoaKoodi(v.t) ? NL + NL + 'Kumoa-koodi:' + NL + kumoaKoodi(v.t).slice(0, 300) : NL + NL + 'Kumoa-koodia ei ole: muutos kumoutuu vain jos koodi käyttää dj-apuria tai palauttaa funktion; muuten sivun uudelleenlataus.') + NL + NL + 'Ajetaanko? Aja vain jos luotat lähettäjään ja ymmärrät koodin.')) return; v.tulos = ajaToiminto(v.t, v.from, false, v); piirra(); });
           nappi('🔖 Talteen', () => { const n = prompt('Anna tallennetulle toiminnolle nimi:', kuvaus(v.t)); if (n === null) return; tallennaMerkinta({ laji: 'toiminto', t: v.t, from: v.from }, n); piirra(); }, 'btn-secondary').title = 'Tallenna nimellä (löytyy ⚙-asetuksista)';
           if (v.loki && v.loki.length) { const rivit = v.loki.map(l => (l.taso === 'log' ? '' : '[' + l.taso + '] ') + l.teksti).join('\n');
             const pl = el('pre', null, nfs(rivit)); pl.style.cssText = 'max-height:100px;overflow:auto;margin:3px 0 0;padding:3px 5px;font-size:11px;white-space:pre-wrap;word-break:break-all;background:rgba(0,0,0,.08);border-radius:3px;user-select:text;width:100%;border-left:3px solid #2a7'; cc.append(el('span', 'message', '▸ Tulos / konsoli:'), pl);
@@ -1197,7 +1198,12 @@
       if (h) { const vb = pikku(el('button', 'btn btn-secondary btn-sm', '⏱ Vanhat viestit', { type: 'button', title: 'Pyytaa taman chatin vanhoja viesteja muilta, jotka ovat nyt huoneessa. Jokainen vastaa vain omilla viesteillaan, enintaan 20 viimeisella. Tiedostoja ei laheteta uudelleen.' })); vb.onclick = () => { pyydaHistoria(h.id); vb.textContent = '… pyydetty'; setTimeout(() => { vb.textContent = '⏱ Vanhat viestit'; }, 6000); }; info.append(vb); }
       if (h && h.id !== YHTEINEN) { const ib = pikku(el('button', 'btn btn-secondary btn-sm', h.avoin ? '📣 Ilmoita uudelleen' : '📣 Jaa huoneeseen', { type: 'button', title: h.avoin ? 'Ilmoittaa chatin uudelleen huoneeseen (ilmoitus menee myös automaattisesti sille joka painaa Hae chatit).' : 'Kertoo huoneelle vain chatin NIMEN ja lukkokuvakkeen. Salasanaa ei lähetetä: liittyjän pitää kysyä se sinulta.' })); ib.onclick = () => { ilmoitaChat(h.id); ib.textContent = '✓ ilmoitettu'; setTimeout(() => piirra(), 4000); }; info.append(ib); }
       { const ln = lasnaLista(ase.valittu); const rivi = el('div', null, ln.length ? '● Täällä nyt: ' + ln.join(', ') : '○ Ei muita tämän chatin käyttäjiä huoneessa'); rivi.style.cssText = 'flex-basis:100%;font-size:11px;opacity:.8'; info.append(rivi); }
-      viestiLaatikko.replaceChildren(); if (h) for (const v of lista(h.id)) viestiLaatikko.append(kupla(h.id, v)); viestiLaatikko.scrollTop = viestiLaatikko.scrollHeight;
+      /* Res 2.10. 00:28 "chatti hyppää aina alas kun runnaa tai peruu koodia / tai lähettää viestin" (kp: "tai tulee viestiä"):
+         piirra() rakentaa kuplat uudelleen ja vieritti AINA pohjaan. Nyt pohjaan vain jos lukija oli jo pohjalla (40 px)
+         tai chat vaihtui; muuten sama vierityskohta säilyy. */
+      const samaChat = viestiLaatikko.dataset.chat === String(h ? h.id : ''), oliPohjalla = viestiLaatikko.scrollHeight - viestiLaatikko.scrollTop - viestiLaatikko.clientHeight < 40, vanhaKohta = viestiLaatikko.scrollTop;
+      viestiLaatikko.replaceChildren(); if (h) for (const v of lista(h.id)) viestiLaatikko.append(kupla(h.id, v));
+      viestiLaatikko.dataset.chat = String(h ? h.id : ''); viestiLaatikko.scrollTop = (!samaChat || oliPohjalla) ? viestiLaatikko.scrollHeight : vanhaKohta;
       nayta(kirjoitus, !!h); piirraAsetukset();
     }
     function piirraKutsut(sailio, pikku) {
@@ -1335,7 +1341,7 @@
         kytkin('Kuittaa saadut viestit', 'pois = et lähetä kuittauksia (lähettäjä ei näe perillemenoa, mutta saa silti viestisi)', () => ase.kuittaus !== false, v => { ase.kuittaus = v; }),
         kytkin('Ota vastaan toimintoja', 'pois = ▶-kortteja ei tule sinulle (viestit ja tiedostot silti)', () => ase.toiminnot !== false, v => { ase.toiminnot = v; }));
       asetukset.append(el('b', null, 'Etäohjaus'),
-        el('span', null, 'Toiminto ajetaan itsestään vain jos lähettäjä on tässä listassa (kävely). Komennot ja koodi tarvitsevat lisäksi alla olevan ruksin. Oletus: tyhjä = aina ▶-nappi.'));
+        el('span', null, 'Luotetut: toiminto ajetaan itsestään vain jos lähettäjä on tässä listassa (kävely), ja heidän koodikorttinsa ▶ ajaa ilman varoitusikkunaa (kp 2.10.). Koodin ajo ILMAN ▶:ta tarvitsee lisäksi alla olevan ruksin. Oletus: tyhjä = aina ▶ + varoitus.'));
       const nimet = el('input', 'form-control form-control-sm', null, { type: 'text', placeholder: 'esim. Res, kurkkupomo (pilkulla)' }); nimet.value = Object.keys(ase.auto).filter(k => ase.auto[k]).join(', ');
       nimet.onchange = () => { ase.auto = {}; nimet.value.split(',').map(s => s.trim()).filter(Boolean).forEach(s => ase.auto[s] = true); tallennaAse(); };
       const stop = el('button', 'btn btn-danger btn-sm', VW.__datajakoPois ? '▶ Salli etäohjaus uudelleen' : '⛔ Pysäytä etäohjaus heti', { type: 'button' }); stop.onclick = () => { VW.__datajakoPois = !VW.__datajakoPois; piirraAsetukset(); };
