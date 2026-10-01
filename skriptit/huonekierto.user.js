@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.6.1
+// @version      1.9.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/huonekierto.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/huonekierto.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -260,8 +260,8 @@
     kahva.className = 'menu-header d-flex justify-content-center align-items-center'; kahva.style.cssText = 'cursor:move;margin-bottom:2px';
     kulmaTeksti = document.createElement('span'); kulmaTeksti.style.cssText = 'display:inline-block;min-width:36px;text-align:center;font-size:14px';
     const rivi = document.createElement('div'); rivi.style.cssText = 'display:flex;align-items:center';
-    rivi.append(nappi('⟲', 'käännä vasemmalle 90°', () => kaanna(tila.kulma - 90)), kulmaTeksti,
-      nappi('⟳', 'käännä oikealle 90°', () => kaanna(tila.kulma + 90)), nappi('↺', 'takaisin oletukseen', () => kaanna(0)));
+    rivi.append(nappi('⟲', 'käännä vasemmalle 90°', () => kaanna(tila.kulma + 90)), kulmaTeksti,
+      nappi('⟳', 'käännä oikealle 90°', () => kaanna(tila.kulma - 90)), nappi('↺', 'takaisin oletukseen', () => kaanna(0)));
     paneeli.append(kahva, rivi);
     // raahaus kahvasta
     kahva.onmousedown = e => {
@@ -292,8 +292,10 @@
   const kierraKomento = a => {
     a = (a || '').toLowerCase();
     if (a === 'paneeli' || a === 'panel') return vaihdaPaneeli();
-    const uusi = a === 'pois' || a === '0' || a === 'reset' ? 0 : a === 'vasen' ? tila.kulma - 90 : a === '180' ? tila.kulma + 180
-      : /^-?\d+$/.test(a) ? Math.round(Number(a) / 90) * 90 : tila.kulma + 90;
+    const uusi = a === 'pois' || a === '0' || a === 'reset' ? 0 : a === 'vasen' ? tila.kulma + 90 : a === '180' ? tila.kulma + 180
+      : /^-?\d+$/.test(a) ? Math.round(Number(a) / 90) * 90 : tila.kulma - 90;
+    // 1.8.0 (kp 2026-09-30 03:26 "kamera kääntyy päinvastasee suuntaa mitä nuolet näyttää"): +90 kiertää huonetta ruudulla
+    //   VASTApäivään (mitattu 01:17, ks. yllä), joten ⟳/oikea = -90 ja ⟲/vasen = +90. Nuolet ja sanat ennallaan.
     kaanna(uusi);
     return 'kierto ' + (((uusi % 360) + 360) % 360) + '°';
   };
@@ -304,6 +306,36 @@
     { nimi: '↺ Vasemmalle', tee: () => kierraKomento('vasen') }, { nimi: '↻ Oikealle', tee: () => kierraKomento('oikea') },
     { nimi: '180°', tee: () => kierraKomento('180') }, { nimi: 'Oletusnäkymä', tee: () => kierraKomento('pois') },
     { nimi: 'Napit näkyviin / piiloon', tee: () => kierraKomento('paneeli') }] });
+  // 1.9.0 (kp 2026-10-01 22:25 "menu tulee jo" / "res lisäs sen tänne" / "tee uus mikä vaa lisää halutun"): pelissä on nyt
+  //   oma right click -valikko (.surface-walk-menu, Res PR #55). Ilman klikkikävelyä tämä lisää siihen YHDEN rivin
+  //   "Kierrä kameraa ›" Peruuta-rivin eteen. Klikkikävelyn kanssa ei tehdä mitään (se lisää rivin jo omaan hahmoon).
+  //   Pelin luokat (menu-item list-item / menu-header p-1), sulkeminen = Escape kuten klikkikävely 1.22.0:ssa.
+  document.addEventListener('contextmenu', e => {
+    try {
+      if (VW.kuplaValikko) return;   // klikkikävely hoitaa
+      const t = e.target; if (!t || t.tagName !== 'CANVAS' || !t.onmousedown) return;   // vain huoneen canvas
+      let yrit = 0;
+      const kiinnita = () => {
+        const m = document.querySelector('.surface-walk-menu');
+        if (!m) { if (++yrit < 20) setTimeout(kiinnita, 15); return; }
+        if (m.querySelector('.hk-rivit')) return;
+        const oma = document.createElement('div'); oma.className = 'hk-rivit';
+        const sulje = () => { oma.remove(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); };
+        const rivi = (teksti, luokat) => { const d = document.createElement('div'); d.className = luokat + ' d-flex justify-content-center align-items-center';
+          d.textContent = teksti; d.onmousedown = ev => { ev.stopPropagation(); ev.preventDefault(); }; oma.appendChild(d); return d; };
+        const paa = () => { oma.textContent = ''; rivi('Kierrä kameraa ›', 'menu-item list-item').onclick = ev => { ev.stopPropagation(); ala(); }; };
+        const ala = () => {
+          oma.textContent = ''; rivi('Kierrä kameraa', 'menu-header p-1');
+          for (const [n, a] of [['↺ Vasemmalle', 'vasen'], ['↻ Oikealle', 'oikea'], ['180°', '180'], ['Oletusnäkymä', 'pois']])
+            rivi(n, 'menu-item list-item').onclick = ev => { ev.stopPropagation(); kierraKomento(a); sulje(); };
+          rivi('‹ Takaisin', 'menu-item list-item').onclick = ev => { ev.stopPropagation(); paa(); };
+        };
+        paa();
+        const peru = m.lastElementChild; m.insertBefore(oma, peru || null);
+      };
+      setTimeout(kiinnita, 0);
+    } catch (err) { VW.__huonekiertoVirhe = String(err && err.stack || err); }
+  }, true);
   document.addEventListener('keydown', e => {
     if (e.key !== 'Enter') return;
     if (VW.kuplaKomennot) return;   // komennot-lisäosa hoitaa
@@ -327,7 +359,10 @@
       if (paneeli) paneeli.style.display = c && paneeliNakyy ? 'flex' : 'none';
       if (!c) return;
       if (huoneVaihtui(c)) { paivitaPaneeli(); return; }
-      if (tila.kulma) {
+      // 1.8.1 (kp 2026-09-30 03:28 "välähtää oudosti huone kääntäes"): tämä tarkistus ajoi KESKEN animaation, näki kameran
+      //   eri kulmassa kuin tila.kulma (vanha) ja palautti sen -> kamera ja seinät hyppäsivät takaisin ja eteen (mitattu robolla:
+      //   ruudun kirkkaus 18,9 -> 16,6 -> 18,9 -> 15,2 animaation lopussa). Animaation aikana ei kosketa.
+      if (tila.kulma && !animoi) {
         // doMagic ei pyyhi, mutta varmistetaan että joku muu (esim. :rotate) ei jättänyt kameraa muualle
         const dx = tila.alku.d0.x + tila.kulma;
         if (Math.abs(c.g.direction.x - dx) > 0.01) aseta(tila.kulma, true); else { siirrot(c); seinaesineet(c, true); }
@@ -335,5 +370,7 @@
     } catch (err) { VW.__huonekiertoVirhe = String(err && err.stack || err); }
   }, 400);
 
-  VW.__huonekierto = { aseta, tila };
+  // 1.7.0 (kp 2026-09-28 03:34 "ja mis mun rotator gui"): Robo-ohjain 4.0:n Liiku-välilehden "oma kamera" -rivi kutsuu komento():a,
+  //   koska tämän oma paneeli on oletuksena piilossa (kp 00:32) eikä sitä löytänyt.
+  VW.__huonekierto = { aseta, tila, kaanna, komento: kierraKomento };
 })();
