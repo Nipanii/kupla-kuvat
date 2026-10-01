@@ -6,7 +6,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.18.0
+// @version      0.19.2
 // @description  Salattu chat + tiedostojako asun (figure) kautta. Vain samassa hotellihuoneessa. Ei palvelinmuutoksia.
 // @kupla-oletus on
 // @author       re-lab
@@ -53,7 +53,7 @@
     if (len > n - 4 || n - 4 - len > 3) return null;
     return buf.slice(4, 4 + len);
   }
-  const VERSIO = '0.18.0';   /* pida sama kuin @version: kerrotaan kuplaDatajako.versio, jotta nakee kumpi versio kussakin clientissa pyorii */
+  const VERSIO = '0.19.2';   /* pida sama kuin @version: kerrotaan kuplaDatajako.versio, jotta nakee kumpi versio kussakin clientissa pyorii */
   const TE = new TextEncoder(), TD = new TextDecoder();
   // kehys: [tyyppi u8][otsikon pituus u16][otsikko JSON][runko]
   const T = { TEKSTI: 1, PALA: 2, POISTA: 3, TARVITSEN: 4, TOIMINTO: 5, KUITTAUS: 6, LASNA: 7, KUTSU: 8, HISTORIA: 9, TARJOUS: 10, LISAOSAT: 11 };
@@ -336,6 +336,7 @@
   const lisaosatTarjotut = new Map();   // jakajan nimi -> { ts, v: [{k,n,d,z}] }
   const lisaosatAjossa = new Map();     // k -> { from, n, kumoa }
   const lisaosatPalat = new Map();      // 'from|k' -> { n, pala: [], nimi }
+  const lisaosaKoodit = new Map();      // k -> { from, n, s, u }: HYVAKSYTTY koodi (0.19.0 toggle). Vain muistissa: sivun lataus unohtaa sen.
   const omatLisaosat = () => (Array.isArray(ase.lisaosat) ? ase.lisaosat : (ase.lisaosat = []));
   function lisaosaLista() { return omatLisaosat().slice(0, 8).map(x => ({ k: x.k, n: String(x.n || x.k).slice(0, 60), d: String(x.d || '').slice(0, 120), z: x.levy ? 0 : String(x.s || '').length })); }
   function ilmoitaLisaosat() { jonoon(YHTEINEN, T.LISAOSAT, { v: lisaosaLista() }); return lisaosaLista().length; }   /* tyhja lista on SALLITTU: se on alasotto */
@@ -359,22 +360,40 @@
     if (!r.ok) throw new Error('levy vastasi ' + r.status);
     return await r.text();
   }
-  async function vastaaLisaosa(kysyja, k) {
+  async function vastaaLisaosa(kysyja, k, vain) {
     const x = omatLisaosat().find(y => y.k === String(k)); if (!x) return false;
     let koodi; try { koodi = await lisaosaKoodi(x); } catch (e) { tiedota(YHTEINEN, 'Lisaosaa "' + (x.n || x.k) + '" ei saatu levylta: ' + e.message); return false; }
     if (!koodi) return false;
     const paketti = JSON.stringify({ s: String(koodi), u: String(x.u || ''), n: String(x.n || x.k) });
     const osat = pilko(paketti, LISAOSA_PALA), n = osat.length;
     if (n > 80) { tiedota(YHTEINEN, 'Lisaosa "' + (x.n || x.k) + '" on liian iso jaettavaksi (' + n + ' palaa, raja 80)'); return false; }
-    for (let i = 0; i < n; i++) jonoon(YHTEINEN, T.LISAOSAT, { r: 2, to: kysyja, k: x.k, i, n, s: osat[i] });
+    for (let i = 0; i < n; i++) { if (vain && vain.indexOf(i) < 0) continue;
+      if (jono.some(q => q.tyyppi === T.LISAOSAT && q.otsikko && q.otsikko.r === 2 && q.otsikko.to === kysyja && q.otsikko.k === x.k && q.otsikko.i === i)) continue;   /* sama pala jo jonossa */
+      jonoon(YHTEINEN, T.LISAOSAT, { r: 2, to: kysyja, k: x.k, i, n, s: osat[i] }); }
     return n;
   }
-  function asennaLisaosa(from, k) { jonoon(YHTEINEN, T.LISAOSAT, { r: 1, to: from, k }); lisaosatPalat.set(from + '|' + k, { n: 0, pala: [], nimi: from, odottaa: true }); paivita(); return true; }
+  function asennaLisaosa(from, k) { jonoon(YHTEINEN, T.LISAOSAT, { r: 1, to: from, k }); lisaosatPalat.set(from + '|' + k, { n: 0, pala: [], nimi: from, from, k, odottaa: true, viim: Date.now(), yrit: 0 }); paivita(); return true; }
+  /* 0.19.0: PUUTTUVAT PALAT PYYDETAAN UUDELLEEN, kuten tiedostoissa. Mitattu 1.10.: 1 palan lisaosa meni perille aina, 40 palan
+     ei 90 sekunnissa - asukanava hukkaa joskus kehyksen, ja ilman uudelleenpyyntoa yksi hukattu pala kaataa koko siirron hiljaa.
+     6 s hiljaisuus -> pyyda puuttuvat (p), enintaan 6 kertaa. Vanha (<0.19) jakaja ei tunne p:ta ja lahettaa kaiken: sekin kelpaa. */
+  function lisaosaPuuttuvat(nyt) {
+    for (const [av, st] of lisaosatPalat) {
+      if (!st.odottaa || nyt - (st.viim || 0) < 6000) continue;
+      if ((st.yrit || 0) >= 6) { lisaosatPalat.delete(av); tiedota(YHTEINEN, 'Lisaosan "' + st.k + '" koodi ei tullut perille (' + st.nimi + '). Paina Asenna uudelleen.'); paivita(); continue; }
+      st.yrit = (st.yrit || 0) + 1; st.viim = nyt;
+      const p = []; if (st.n) for (let i = 0; i < st.n; i++) if (typeof st.pala[i] !== 'string') p.push(i);
+      jonoon(YHTEINEN, T.LISAOSAT, st.n ? { r: 1, to: st.from, k: st.k, p: p.slice(0, 80) } : { r: 1, to: st.from, k: st.k });
+    }
+  }
   function ajaLisaosa(k, nimi2, koodi, kumoa, from) {
     /* Robon kaltainen automaattinen client ei saa jumittua confirm-dialogiin: ase.lisaosatAja === false estaa ajon kokonaan. */
     if (ase.lisaosatAja === false) { tiedota(YHTEINEN, 'Lisaosa "' + nimi2 + '" saapui (' + from + ') mutta ajaminen on estetty tassa selaimessa'); paivita(); return 'ajaminen estetty'; }
     const nayta = String(koodi).slice(0, 1200) + (String(koodi).length > 1200 ? '\n…(' + String(koodi).length + ' merkkia)' : '');
-    if (!confirm('Lisaosa "' + nimi2 + '" kayttajalta ' + from + '\n\n' + nayta + '\n\nAjetaanko tama koodi selaimessasi?')) return false;
+    /* 0.19.0 TOGGLE (kp 1.10. "piti olla kans se toggle ja revert vaihtoehdot jos script tukee"): hyvaksytty koodi pidetaan
+       muistissa, joten Pois -> Paalla ei hae eika kysy uudelleen. Vahvistus kysytaan aina kun koodi on UUSI tai MUUTTUNUT. */
+    const vanha = lisaosaKoodit.get(k), sama = vanha && vanha.s === String(koodi) && vanha.u === String(kumoa || '') && vanha.from === from;
+    if (!sama && !confirm('Lisaosa "' + nimi2 + '" kayttajalta ' + from + '\n\n' + nayta + '\n\nAjetaanko tama koodi selaimessasi?')) return false;
+    lisaosaKoodit.set(k, { from, n: nimi2, s: String(koodi), u: String(kumoa || '') });
     const ennen = new Set(Array.prototype.slice.call(document.body.children));   /* mika oli jo olemassa: nimen perusteella ei voi erottaa omaa kopiota kayttajan omasta */
     /* 0.18.0: userscriptin Tampermonkey-nimet. unsafeWindow = sivun window (koodi ajetaan jo sivun kontekstissa), ja
        GM_addStyle menee dj.tyyli:n kautta, jolloin tyylit kumoutuvat ⏹:lla. Muita GM_-kutsuja EI tueta (verkko, tallennus). */
@@ -384,13 +403,18 @@
     const lisatyt = [];
     const kerays = setInterval(() => { for (const el2 of Array.prototype.slice.call(document.body.children)) if (!ennen.has(el2) && lisatyt.indexOf(el2) < 0) lisatyt.push(el2); }, 500);
     setTimeout(() => clearInterval(kerays), 8000);   /* 8 s ikkuna: myohemmin ilmestyvia elementteja ei poisteta, ja se on sanottu ulos */
-    lisaosatAjossa.set(k, { from, n: nimi2, kumoa: () => { clearInterval(kerays); try { if (v.kumoa) v.kumoa(); } catch (e) {} for (const el2 of lisatyt) { try { el2.remove(); } catch (e) {} } } });
+    lisaosatAjossa.set(k, { from, n: nimi2, kumoa: () => { clearInterval(kerays); try { if (v.kumoa) v.kumoa(); } catch (e) {} for (const el2 of lisatyt) { try { el2.remove(); } catch (e) {} } },
+      tuki: () => !!v.kumoa || lisatyt.length > 0 });   /* "jos script tukee": palautti funktion, kaytti dj.*:ta, toi kumoa-koodin tai lisasi elementteja */
+    setTimeout(paivita, 1500); setTimeout(paivita, 8500);   /* tuki selviaa vasta kun async-koodi on valmis ja keraysikkuna sulkeutuu */
     tiedota(YHTEINEN, 'Lisaosa "' + nimi2 + '" ajettu (' + from + '): ' + tulos); paivita(); return tulos;
   }
   function kumoaLisaosa(k, syy) { const x = lisaosatAjossa.get(String(k)); if (!x) return false; x.kumoa(); lisaosatAjossa.delete(String(k)); tiedota(YHTEINEN, 'Lisaosa "' + x.n + '" kumottu: ' + (syy || 'otit sen pois')); paivita(); return true; }
   function lisaosaTarjoukset() {   /* vain ne jakajat jotka ovat NYT samassa huoneessa (kp: "if you are available in the same room, it appears") */
     const paikalla = new Set(yksikot().map(u => u.name)), oma = omaNimi(), ulos = [];
     for (const [nimi, t] of lisaosatTarjotut) { if (nimi === oma || !paikalla.has(nimi)) continue; for (const x of t.v) ulos.push(Object.assign({ from: nimi }, x)); }
+    /* 0.19.0: ajossa oleva tai hyvaksytty lisaosa nakyy vaikka jakaja lahti huoneesta - muuten sita ei voinut enaa sammuttaa */
+    for (const [k, x] of lisaosaKoodit) if (!ulos.some(y => y.k === k)) ulos.push({ from: x.from, k, n: x.n, d: '', z: x.s.length, poissa: true });
+    for (const [k, x] of lisaosatAjossa) if (!ulos.some(y => y.k === k)) ulos.push({ from: x.from, k, n: x.n, d: '', z: 0, poissa: true });
     return ulos;
   }
 
@@ -560,11 +584,11 @@
       paivita();
     } else if (k.tyyppi === T.LISAOSAT) {
       if (o.r === 0) { if (omatLisaosat().length) setTimeout(() => ilmoitaLisaosat(), 300 + Math.random() * 1500); return; }   // joku kysyi: kerro omat
-      if (o.r === 1) { if (o.to === omaNimi()) vastaaLisaosa(nimi, String(o.k || '').slice(0, 40)); return; }   // koodipyynto: levylta vasta nyt
+      if (o.r === 1) { if (o.to === omaNimi()) vastaaLisaosa(nimi, String(o.k || '').slice(0, 40), Array.isArray(o.p) ? o.p.map(x => x | 0) : null); return; }   // koodipyynto: levylta vasta nyt. p = vain puuttuvat palat (0.19.0)
       if (o.r === 2) {
         if (o.to !== omaNimi()) return;
         const av = nimi + '|' + String(o.k || '').slice(0, 40), st = lisaosatPalat.get(av); if (!st || !st.odottaa) return;   /* vain se mita ITSE pyysin */
-        st.n = Math.max(1, Math.min(80, o.n | 0)); if ((o.i | 0) >= st.n) return; st.pala[o.i | 0] = String(o.s || '');   /* 0.18.0: 80 palaa (oli 40) = 64 000 merkin lisaosa */
+        st.n = Math.max(1, Math.min(80, o.n | 0)); if ((o.i | 0) >= st.n) return; st.pala[o.i | 0] = String(o.s || ''); st.viim = Date.now();   /* 0.18.0: 80 palaa (oli 40) = 64 000 merkin lisaosa */
         let kaikki = 0; for (let i = 0; i < st.n; i++) if (typeof st.pala[i] === 'string') kaikki++;
         if (kaikki < st.n) { paivita(); return; }
         lisaosatPalat.delete(av);
@@ -577,6 +601,7 @@
       const v2 = o.v.filter(x => x && x.k).slice(0, 8).map(x => ({ k: String(x.k).slice(0, 40), n: String(x.n || x.k).slice(0, 60), d: String(x.d || '').slice(0, 120), z: Math.max(0, x.z | 0) }));
       lisaosatTarjotut.set(nimi, { ts: Date.now(), v: v2 });
       for (const [kk, tila] of [...lisaosatAjossa]) if (tila.from === nimi && !v2.some(x => x.k === kk)) kumoaLisaosa(kk, 'jakaja otti sen alas');   /* kill switch */
+      for (const [kk, x] of [...lisaosaKoodit]) if (x.from === nimi && !v2.some(y => y.k === kk)) lisaosaKoodit.delete(kk);   /* alas otettua ei voi enaa kytkea paalle */
       paivita();
     } else if (k.tyyppi === T.KUITTAUS) {
       if (!Array.isArray(o.k)) return; let muuttui = false;
@@ -765,6 +790,7 @@
         try { await kasittele(huone, u.name, k); tilasto.ok++; } catch (e) { tilasto.virhe++; tilasto.viimeVirhe = String(e && e.message).slice(0, 120); }
       }
       const nyt = Date.now();   // puuttuvien palojen pyyntö
+      lisaosaPuuttuvat(nyt);
       const paikalla = new Set(yksikot().map(u => u.name));
       for (const [av, t] of tiedostot) if (t.saatu < t.n) {
         const [h, id] = av.split('|'), v = lista(h).find(x => x.id === id); let tila = '';
@@ -865,12 +891,18 @@
   if (!VW.__djValikkoRivi) { VW.__djValikkoRivi = true;
     (VW.kuplaValikkoJono = VW.kuplaValikkoJono || []).push({ kohde: 'hahmo', lisaosa: 'Datajako',
       nimi: ctx => VW.__djValikkoApi.nimi(ctx), nakyy: ctx => VW.__djValikkoApi.nakyy(ctx), tee: ctx => VW.__djValikkoApi.tee(ctx) }); }
-  VW.kuplaDatajako = { versio: VERSIO, tagilista, tarjousLista, palautaLahetetty, toistaTarjoukset, jaaLisaosa, poistaLisaosa, asennaLisaosa, kumoaLisaosa, ilmoitaLisaosat, lisaosaTarjoukset, lisaosatAjossa, lisaosatTarjotut, omatLisaosat, avaaYv, yvId, yvChat, yvHuone, yvAvaimet, haeTiedosto, historiaViestit, lahetetyt, tiedostot, lasnaLista, ilmoitaChat, vastaaKutsuihin, kutsut, ilmoitetut, pyydaHistoria, tarjoukset, tilasto, osoita, kohdeKlikista, kohdeGeometria, ase, viestit, lista, liity, uusiHuoneId, lahetaTeksti, lahetaTiedosto, lahetaToiminto, lahetaTiedostoUudelleen, omaNimi, poistaJaettu, poistaOmasta, poistuHuoneesta, tyhjennaHuone, nimeaHuone, pakkaaKuva, ajaToiminto, kuvaus, puhdasAsu, kuuntelijat, tallennaAse, tallennaMerkinta, komennot: { rekisteroi: rekisteroiKomento, poista: n => komennot.delete(komentoNimi(n)), lista: () => [...komennot.keys()] }, ajaKomento, jasenna, vieAsetukset, tuoAsetukset, siivoaTuonti, siivoaMerkinta, jono, CHUNK, GAP, RAJA, lue, yksikot };
+  VW.kuplaDatajako = { versio: VERSIO, tagilista, tarjousLista, palautaLahetetty, toistaTarjoukset, jaaLisaosa, poistaLisaosa, asennaLisaosa, kumoaLisaosa, ajaLisaosa, lisaosaKoodit, lisaosatPalat, ilmoitaLisaosat, lisaosaTarjoukset, lisaosatAjossa, lisaosatTarjotut, omatLisaosat, avaaYv, yvId, yvChat, yvHuone, yvAvaimet, haeTiedosto, historiaViestit, lahetetyt, tiedostot, lasnaLista, ilmoitaChat, vastaaKutsuihin, kutsut, ilmoitetut, pyydaHistoria, tarjoukset, tilasto, osoita, kohdeKlikista, kohdeGeometria, ase, viestit, lista, liity, uusiHuoneId, lahetaTeksti, lahetaTiedosto, lahetaToiminto, lahetaTiedostoUudelleen, omaNimi, poistaJaettu, poistaOmasta, poistuHuoneesta, tyhjennaHuone, nimeaHuone, pakkaaKuva, ajaToiminto, kuvaus, puhdasAsu, kuuntelijat, tallennaAse, tallennaMerkinta, komennot: { rekisteroi: rekisteroiKomento, poista: n => komennot.delete(komentoNimi(n)), lista: () => [...komennot.keys()] }, ajaKomento, jasenna, vieAsetukset, tuoAsetukset, siivoaTuonti, siivoaMerkinta, jono, CHUNK, GAP, RAJA, lue, yksikot };
 
   // ---------- ajastin (Worker: piilotettu välilehti ei kuristu) ----------
   let n = 0;
+  /* 0.19.1 EDELLINEN INSTANSSI SAMMUTETAAN. Mitattu 1.10.: asenna.js poisti vanhan ikkunan mutta EI ajastinta, joten jokainen
+     uudelleenasennus jatti taustalle kopion joka luki jokaisen kehyksen ja saattoi vastata pyyntoihin (robolla 8 jaannosta).
+     Koskee vain sivuja joille versio injektoidaan paalle; Tampermonkey lataa kerran. Vanhempiin (<0.19.1) ei ole kahvaa. */
+  try { if (typeof VW.__djSammuta === 'function') VW.__djSammuta(); } catch (e) {}
+  document.querySelectorAll('.dj-ikkuna').forEach(e => { if (/Klikkaa kohdetta/.test(e.textContent || '') && getComputedStyle(e).display === 'none') e.remove(); });
   const w = new Worker(URL.createObjectURL(new Blob(['setInterval(()=>postMessage(1),25)'])));
   w.onmessage = () => { try { n++; if (n % 2 === 0) lue(); laheteTick(); } catch (e) {} };
+  VW.__djSammuta = () => { try { w.terminate(); } catch (e) {} };
   setTimeout(aloitusSiivous, 3000);
 
   // ---------- käyttöliittymä: pelin OMAT luokat (nitro-card ikkuna, chat-bubble puhekupla, btn, form-control) ----------
@@ -883,7 +915,7 @@
       try { navigator.clipboard.writeText(txt).then(ok, vara); } catch (e) { vara(); } };
     const nfs = t => String(t).replace(/\u2014/g, '-');   // pelin fontti piirtää em-viivan nuottimerkkinä: vain näytössä, kopiointi ja lähetys säilyttävät alkuperäisen
     const kb = b => b < 1024 ? b + ' t' : (b / 1024).toFixed(b < 10240 ? 1 : 0) + ' kt';
-    const st = el('style', null, '.dj-pois{display:none!important} .dj-ikkuna .chat-content,.dj-ikkuna .chat-content *{user-select:text!important;-webkit-user-select:text!important;cursor:text} .dj-ikkuna .chat-content button{cursor:pointer;user-select:none!important} .dj-ikkuna .chat-content a{cursor:pointer!important;pointer-events:all!important;text-decoration:underline}'); document.head.append(st);   // pelin CSS estää tekstin valinnan -> sallitaan
+    const st = el('style', null, '.dj-pois{display:none!important} .dj-ikkuna .chat-content,.dj-ikkuna .chat-content *{user-select:text!important;-webkit-user-select:text!important;cursor:text} .dj-ikkuna .chat-content button{cursor:pointer;user-select:none!important} .dj-ikkuna .chat-content a{cursor:pointer!important;pointer-events:all!important;text-decoration:underline} .dj-lista>*{flex-shrink:0!important}'); document.head.append(st);   // pelin CSS estää tekstin valinnan -> sallitaan
     const nayta = (e, on) => e.classList.toggle('dj-pois', !on);
     const tauko = (f, ms) => { let t = 0; return () => { clearTimeout(t); t = setTimeout(f, ms); }; };
 
@@ -949,8 +981,10 @@
     liityRivi.append(nimiKentta, liityKentta, liityNappi, peruLiity);
     const info = el('div', 'text-black nitro-small-size-text'); info.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap';
     const viestiLaatikko = el('div', 'd-flex flex-column chat-history-list'); viestiLaatikko.style.cssText = 'flex:1;overflow-y:auto;overflow-x:hidden;padding:4px 2px;min-height:80px';
-    const listaLaatikko = el('div', 'd-flex flex-column gap-1 text-black'); listaLaatikko.style.cssText = 'flex:1;overflow-y:auto;overflow-x:hidden;padding:4px 2px;min-height:80px';
-    const lisaLaatikko = el('div', 'd-flex flex-column gap-1 text-black'); lisaLaatikko.style.cssText = 'flex:1;overflow-y:auto;overflow-x:hidden;padding:4px 2px;min-height:80px';
+    /* 0.19.1 dj-lista: lapset eivat kutistu. Ennen chattirivit kutistuivat ja viimeisin viesti jai 6 px korkeaksi
+       (kp "noi chatit alhaalla, niiden tiedot ei näy"); nyt lista vierittyy kun rivit eivat mahdu. */
+    const listaLaatikko = el('div', 'd-flex flex-column gap-1 text-black dj-lista'); listaLaatikko.style.cssText = 'flex:1;overflow-y:auto;overflow-x:hidden;padding:4px 2px;min-height:80px';
+    const lisaLaatikko = el('div', 'd-flex flex-column gap-1 text-black dj-lista'); lisaLaatikko.style.cssText = 'flex:1;overflow-y:auto;overflow-x:hidden;padding:4px 2px;min-height:80px';
     /* 0.18.0 JAKOLOMAKE. kp 1.10.: "tee se script jako osuus salatsättiin kun se oli mun original idea" / "Et voi jakaa
        scriptei helposti". Ennen tata jakaminen onnistui vain konsolista (kuplaDatajako.jaaLisaosa). Lomake rakennetaan
        KERRAN ja omaan sailioonsa: lista piirretaan uudelleen joka saapuvalla kehyksella, ja se pyyhki muuten kirjoitetun. */
@@ -1171,7 +1205,7 @@
         for (const [avain2, kt] of kutsut) {
           if (!paikalla.has(kt.from)) continue;
           if (kt.yv ? !!yvChat(kt.from) : kt.lukko ? ase.huoneet.some(x => x.tag === kt.tag) : ase.huoneet.some(x => x.id === avain2)) continue;
-          const r = el('div', null, null); r.style.cssText = 'flex-basis:100%;display:flex;gap:6px;align-items:center;font-size:12px';
+          const r = el('div', null, null); r.style.cssText = 'flex:0 0 auto;width:100%;display:flex;gap:6px;align-items:center;font-size:12px';   /* 0.19.1: oli flex-basis:100% -> pystysaliossa se on 100 % KORKEUDESTA: kutsu venyi 443 px ja jai keskelle (kp "keskellä tollee toi pingattava") */
           const j = pikku(el('button', 'btn btn-success btn-sm', 'Liity', { type: 'button' }));
           j.onclick = async () => {
             if (kt.yv) { const id = await avaaYv(kt.from); if (!id) alert('1:1 chat ei onnistu: ' + kt.from + ' ei ole lahettanyt julkista avaintaan. Paina 🔍 Hae ja yrita uudelleen.'); return piirra(); }
@@ -1258,13 +1292,20 @@
         const r1 = el('div', null, null); r1.style.cssText = 'display:flex;gap:6px;align-items:center';
         const n1 = el('span', null, x.n); n1.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600';
         r1.append(n1);
-        const ajossa = lisaosatAjossa.has(x.k);
-        if (ajossa) { const a = el('span', null, 'ajossa'); a.style.cssText = 'font-size:10px;font-weight:700;background:#2a7;color:#fff;border-radius:9px;padding:0 6px'; r1.append(a); }
-        const nappi2 = pikku(el('button', 'btn ' + (ajossa ? 'btn-secondary' : 'btn-success') + ' btn-sm', ajossa ? '⏹ Kumoa' : '⬇ Asenna', { type: 'button' }));
-        nappi2.title = ajossa ? 'Kumoaa lisäosan muutokset tässä selaimessa' : 'Pyytää koodin käyttäjältä ' + x.from + '. Koodi näytetään sinulle ennen ajoa.';
-        nappi2.onclick = () => { if (ajossa) kumoaLisaosa(x.k); else { asennaLisaosa(x.from, x.k); nappi2.textContent = '… pyydetty'; nappi2.disabled = true; } piirra(); };
+        /* 0.19.0 YKSI TOGGLE (kp 1.10. "Päällä/pois päältä on kyl aika sama asia ku se toggle"): ⬇ Asenna -> 🟢 Päällä <-> ⚪ Pois.
+           Pois = kumoa, ja se on tarjolla vain jos skripti tukee sitä. Uudelleen paalle ei hae eika kysy (sama hyvaksytty koodi). */
+        const ajossa = lisaosatAjossa.get(x.k), koodi = lisaosaKoodit.get(x.k);
+        let nappi2;
+        if (ajossa && !ajossa.tuki()) {
+          nappi2 = el('span', null, 'päällä · ei kumottavissa'); nappi2.style.cssText = 'font-size:10px;font-weight:700;background:#2a7;color:#fff;border-radius:9px;padding:0 6px';
+          nappi2.title = 'Tämä skripti ei kerro, miten sen muutokset poistetaan. Sivun lataus poistaa sen.';
+        } else {
+          nappi2 = pikku(el('button', 'btn ' + (ajossa ? 'btn-success' : 'btn-secondary') + ' btn-sm', ajossa ? '🟢 Päällä' : koodi ? '⚪ Pois' : '⬇ Asenna', { type: 'button' }));
+          nappi2.title = ajossa ? 'Paina: pois päältä (kumoaa muutokset tässä selaimessa)' : koodi ? 'Paina: päälle (sama koodi jonka hyväksyit, ei kysytä uudelleen)' : 'Pyytää koodin käyttäjältä ' + x.from + '. Koodi näytetään sinulle ennen ajoa.';
+          nappi2.onclick = () => { if (ajossa) kumoaLisaosa(x.k); else if (koodi) ajaLisaosa(x.k, koodi.n, koodi.s, koodi.u, koodi.from); else { asennaLisaosa(x.from, x.k); nappi2.textContent = '… pyydetty'; nappi2.disabled = true; } piirra(); };
+        }
         r1.append(nappi2);
-        const r2 = el('div', null, (x.d || '') + '  · ' + x.from + (x.z ? ' · ' + x.z + ' merkkiä' : ' · levyltä'));
+        const r2 = el('div', null, (x.d || '') + '  · ' + x.from + (x.poissa ? ' (ei huoneessa)' : '') + (x.z ? ' · ' + x.z + ' merkkiä' : ' · levyltä'));
         r2.style.cssText = 'font-size:10px;opacity:.8';
         rivi.append(r1, r2); lisaDyn.append(rivi);
       }
