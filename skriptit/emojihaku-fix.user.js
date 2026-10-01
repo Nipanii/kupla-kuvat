@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.0.0
+// @version      1.0.1
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/emojihaku-fix.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/emojihaku-fix.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -30,9 +30,12 @@
     const v = viim.get(el);
     if (v && el.contains(document.activeElement) && !VW.__kuplaEmojihakuPois) { s.left = v.left; s.top = v.top; s.visibility = 'visible'; korjattu++; }
   };
-  new MutationObserver(ms => { for (const m of ms) {
-    if (m.type === 'attributes' && m.target.classList && m.target.classList.contains('nitro-chat-emoji-selector-container')) tarkista(m.target);
-    else if (m.type === 'childList') for (const n of m.addedNodes) if (n.nodeType === 1) { const p = n.matches('.nitro-chat-emoji-selector-container') ? n : n.querySelector && n.querySelector('.nitro-chat-emoji-selector-container'); if (p) tarkista(p); }
-  } }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['style'] });
+  // 1.0.1 kp 00:57 "outo latenssi": ei enää koko sivun style-tarkkailua. Body-tason lapset (portaali) tarkkaillaan ilman subtreeta,
+  // ja vain löytyneen popoverin oma style-attribuutti.
+  const seuratut = new WeakSet(), tyylit = new MutationObserver(ms => { for (const m of ms) tarkista(m.target); });
+  const liita = p => { if (!p || seuratut.has(p)) return; seuratut.add(p); tarkista(p); tyylit.observe(p, { attributes: true, attributeFilter: ['style'] }); };
+  const etsi = n => n && n.nodeType === 1 && (n.matches('.nitro-chat-emoji-selector-container') ? n : n.querySelector('.nitro-chat-emoji-selector-container'));
+  new MutationObserver(ms => { for (const m of ms) for (const n of m.addedNodes) liita(etsi(n)); }).observe(document.body, { childList: true });
+  liita(document.querySelector('.nitro-chat-emoji-selector-container'));
   VW.kuplaEmojihakuFix = { korjattu: () => korjattu };
 })();

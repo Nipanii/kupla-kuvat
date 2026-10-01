@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.1.0
+// @version      1.1.1
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/pitka-viesti.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/pitka-viesti.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -43,7 +43,10 @@
     return osat;
   }
   const vapauta = () => { if (VW.__kuplaPitkaPois) return; const el = document.querySelector(SEL); if (el && el.maxLength !== -1 && el.maxLength < 2000) el.maxLength = 2000; };
-  new MutationObserver(vapauta).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['maxlength'] }); vapauta();
+  // 1.1.1 kp 00:57 "siin on outo latenssi": koko bodyn MutationObserver (childList+subtree) laukesi jokaisesta chat-kuplasta.
+  // Nyt raja poistetaan vasta kun chat-kenttä saa fokuksen tai siihen kirjoitetaan (halpa, ei tarkkailua).
+  addEventListener('focusin', e => { if (e.target instanceof HTMLInputElement && e.target.matches(SEL)) vapauta(); }, true);
+  addEventListener('beforeinput', e => { if (e.target instanceof HTMLInputElement && e.target.matches(SEL)) vapauta(); }, true); vapauta();
   let jono = [], kaynnissa = false;
   const laheta = () => { const el = document.querySelector(SEL); const seur = jono.shift(); if (!el || seur == null) { kaynnissa = false; return; }
     el.focus(); asetaArvo(el, seur); VW.__kuplaPitkaOhita = true;
