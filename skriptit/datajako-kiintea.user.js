@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Kupla Datajako
+// @name         Kupla Datajako (ei automaattista paivitysta)
 // @namespace    https://re-lab.local/kupla
-// @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/datajako.user.js
-// @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/datajako.user.js
+// @updateURL    none
+// @downloadURL none
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
