@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.7.2
+// @version      0.7.4
 // @description  Salattu chat + tiedostojako asun (figure) kautta. Vain samassa hotellihuoneessa. Ei palvelinmuutoksia.
 // @kupla-oletus on
 // @author       re-lab
@@ -508,7 +508,7 @@
   const uusiHuoneId = () => { const r = crypto.getRandomValues(new Uint32Array(4)); return [0, 1, 2].map(i => SANAT[r[i] % SANAT.length]).join('-') + '-' + (100 + r[3] % 900); };
   const normId = id => String(id || '').trim().toLowerCase().replace(/\s+/g, '-');
   function nimeaHuone(id, nimi) { const h = ase.huoneet.find(x => x.id === id); if (!h) return false; h.nimi = String(nimi || '').trim().slice(0, 60) || id; tallennaAse(); paivita(); return true; }
-  function liity(id, nimi) { id = normId(id); if (id.length < 6 || id.length > 80) return false; if (!ase.huoneet.some(h => h.id === id)) ase.huoneet.push({ id, nimi: nimi || id }); else if (nimi) nimeaHuone(id, nimi); ase.valittu = id; tallennaAse(); paivita(); return true; }
+  function liity(id, nimi) { id = normId(id); if (id.length < 6 || id.length > 80) return false; const uusi = !ase.huoneet.some(h => h.id === id); if (uusi) { ase.huoneet.push({ id, nimi: nimi || id }); setTimeout(() => pyydaHistoria(id), 1800); } else if (nimi) nimeaHuone(id, nimi); /* juuri liityin: hae vanhat viestit itse (kp 1.10.) */ ase.valittu = id; tallennaAse(); paivita(); return true; }
   function tyhjennaHuone(id) { viestit.delete(id); for (const m of [tiedostot, lahetetyt]) for (const k of [...m.keys()]) if (k.startsWith(id + '|')) m.delete(k); kuittausJono.delete(id); for (let i = jono.length - 1; i >= 0; i--) if (jono[i].huone === id) jono.splice(i, 1); paivita(); }   // vain oma muisti: ei paketteja, ei ilmoitusta muille
   function poistuHuoneesta(id) { if (id === YHTEINEN) return tyhjennaHuone(id); ilmoitetut.delete(id); kutsut.delete(id); tyhjennaHuone(id); ase.huoneet = ase.huoneet.filter(h => h.id !== id); if (ase.valittu === id) ase.valittu = (ase.huoneet[0] || {}).id || null; tallennaAse(); paivita(); }
 
@@ -736,13 +736,13 @@
       const w = el('div', 'chat-history-entry d-flex'); w.style.margin = '4px 0';
       const c = el('div', 'bubble-container visible');
       const bg = el('div', 'user-container-bg'); bg.style.backgroundColor = '#fff';
-      const b = el('div', 'chat-bubble bubble-0 type-0'); b.style.cssText = 'max-width:100%;width:100%';
+      const b = el('div', 'chat-bubble bubble-0 type-0'); b.style.cssText = 'max-width:100%;box-sizing:border-box;overflow:hidden';
       const uc = el('div', 'user-container'), ui = el('div', 'user-image'); const p = paaKuva(figureNimelle(v.from));
       if (p) { ui.style.backgroundImage = 'url("' + p + '")'; ui.style.backgroundSize = 'contain'; ui.style.backgroundPosition = 'center top'; ui.style.backgroundRepeat = 'no-repeat'; }
-      uc.append(ui); const cc = el('div', 'chat-content'); cc.style.width = '100%'; cc.append(el('b', 'username mr-1', v.from + ': '));
-      const rivi2 = el('div', 'd-flex gap-1 align-items-center'); rivi2.style.cssText = 'margin-top:3px;flex-wrap:nowrap;width:max-content;max-width:100%;overflow-x:auto';   // kp 1.10. "menee usealle riville noi napit": kupla kutistui tekstin levyiseksi ja napit kaartuivat
+      uc.append(ui); const cc = el('div', 'chat-content'); cc.style.cssText = 'max-width:100%;min-width:0;overflow-wrap:anywhere;word-break:break-word'; cc.append(el('b', 'username mr-1', v.from + ': '));
+      const rivi2 = el('div', 'd-flex gap-1 align-items-center'); rivi2.style.cssText = 'margin-top:3px;flex-wrap:wrap;row-gap:3px;max-width:100%';   // kp 1.10. "menee usealle riville noi napit": kupla kutistui tekstin levyiseksi ja napit kaartuivat
       const nappi = (txt, f, cls) => { const m = /^(\P{L}\S*)\s+(.+)$/u.exec(txt), n = el('button', 'btn btn-sm ' + (cls || 'btn-primary'), m ? m[1] : txt, { type: 'button' }); if (m) n.title = m[2]; n.style.cssText = 'padding:0 5px;font-size:12px;line-height:18px'; n.onclick = f; rivi2.append(n); return n; };   // kuvake riittää: selitys on title, muuten rivi katkeaa
-      if (v.tyyppi === 'teksti') { const tx = el('span', 'message', nfs(v.teksti)); tx.style.whiteSpace = 'pre-wrap'; if (v.jarj) { tx.style.opacity = '.8'; tx.style.fontStyle = 'italic'; } if (v.historia) { tx.style.opacity = '.85'; cc.append(el('span', 'message', '⏱ ')); } cc.append(tx);
+      if (v.tyyppi === 'teksti') { const tx = el('span', 'message', nfs(v.teksti)); tx.style.whiteSpace = 'pre-wrap'; tx.style.overflowWrap = 'anywhere'; tx.style.maxWidth = '100%'; if (v.jarj) { tx.style.opacity = '.8'; tx.style.fontStyle = 'italic'; } if (v.historia) { tx.style.opacity = '.85'; cc.append(el('span', 'message', '⏱ ')); } cc.append(tx);
         if (v.jarj) { /* järjestelmäviesti: ei jaettu */ } else {
         const kn = nappi('📋 Kopioi', () => kopioi(v.teksti, kn), 'btn-secondary');
         nappi('🔖 Muistiin', () => { const n = prompt('Anna tallennetulle viestille nimi (Datajaon omaan listaan, ei lataa mitään koneelle):', v.teksti.slice(0, 40)); if (n === null) return; tallennaMerkinta({ laji: 'teksti', teksti: v.teksti, from: v.from }, n); piirra(); }, 'btn-secondary').title = 'Tallenna nimellä (löytyy ⚙-asetuksista)'; } }
