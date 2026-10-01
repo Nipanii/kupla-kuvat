@@ -6,7 +6,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.7.4
+// @version      0.7.5
 // @description  Salattu chat + tiedostojako asun (figure) kautta. Vain samassa hotellihuoneessa. Ei palvelinmuutoksia.
 // @kupla-oletus on
 // @author       re-lab
@@ -743,7 +743,7 @@
       if (p) { ui.style.backgroundImage = 'url("' + p + '")'; ui.style.backgroundSize = 'contain'; ui.style.backgroundPosition = 'center top'; ui.style.backgroundRepeat = 'no-repeat'; }
       uc.append(ui); const cc = el('div', 'chat-content'); cc.style.cssText = 'max-width:100%;min-width:0;overflow-wrap:anywhere;word-break:break-word'; cc.append(el('b', 'username mr-1', v.from + ': '));
       const rivi2 = el('div', 'd-flex gap-1 align-items-center'); rivi2.style.cssText = 'margin-top:3px;flex-wrap:wrap;row-gap:3px;max-width:100%';   // kp 1.10. "menee usealle riville noi napit": kupla kutistui tekstin levyiseksi ja napit kaartuivat
-      const nappi = (txt, f, cls) => { const m = /^(\P{L}\S*)\s+(.+)$/u.exec(txt), n = el('button', 'btn btn-sm ' + (cls || 'btn-primary'), m ? m[1] : txt, { type: 'button' }); if (m) n.title = m[2]; n.style.cssText = 'padding:0 5px;font-size:12px;line-height:18px'; n.onclick = f; rivi2.append(n); return n; };   // kuvake riittää: selitys on title, muuten rivi katkeaa
+      const nappi = (txt, f, cls) => { const m = /^(\P{L}\S*)\s+(.+)$/u.exec(txt), lyhyt = m && m[2].length <= 5, n = el('button', 'btn btn-sm ' + (cls || 'btn-primary'), m ? (lyhyt ? m[1] + ' ' + m[2] : m[1]) : txt, { type: 'button' }); if (m) n.title = m[2]; n.style.cssText = 'padding:0 5px;font-size:12px;line-height:18px'; n.onclick = f; rivi2.append(n); return n; };   // kuvake riittää: selitys on title, muuten rivi katkeaa
       if (v.tyyppi === 'teksti') { const tx = el('span', 'message', nfs(v.teksti)); tx.style.whiteSpace = 'pre-wrap'; tx.style.overflowWrap = 'anywhere'; tx.style.maxWidth = '100%'; if (v.jarj) { tx.style.opacity = '.8'; tx.style.fontStyle = 'italic'; } if (v.historia) { tx.style.opacity = '.85'; cc.append(el('span', 'message', '⏱ ')); } cc.append(tx);
         if (v.jarj) { /* järjestelmäviesti: ei jaettu */ } else {
         const kn = nappi('📋 Kopioi', () => kopioi(v.teksti, kn), 'btn-secondary');
@@ -757,7 +757,7 @@
           else if (/^image\//.test(v.mime) && !v.nayta) nappi('näytä', () => { v.nayta = true; piirra(); }, 'btn-secondary');
           const tekstia = /^text\/|json|javascript|xml/.test(v.mime) || /\.(js|json|txt|md|css|html|xml|csv|log)$/i.test(v.nimi);
           if (tekstia && v.size <= 200000) nappi(v.koodi ? '📄 Piilota koodi' : '📄 Näytä koodi', () => { if (v.koodi) { v.koodi = null; piirra(); } else v.blob.text().then(t => { v.koodi = t.slice(0, 60000); piirra(); }); }, 'btn-secondary');
-          nappi('⬇ Lataa tiedostona', () => lataa(v)).title = 'Tallentaa tiedoston koneellesi (Chromen lataus)'; nappi('🔗 Avaa', () => avaa(v), 'btn-secondary').title = 'Avaa uudelle välilehdelle';
+          nappi('⬇ Lataa', () => lataa(v)).title = 'Tallentaa tiedoston koneellesi (Chromen lataus)'; nappi('🔗 Avaa', () => avaa(v), 'btn-secondary').title = 'Avaa uudelle välilehdelle';
           if (tekstia && v.size <= 200000) { const kf = nappi('📋 Kopioi', () => v.blob.text().then(t => kopioi(t, kf)), 'btn-secondary'); }
           if (tekstia && v.size <= 100000) nappi('🔖 Muistiin', () => v.blob.text().then(t => { const n = prompt('Anna tallennetulle tiedostolle nimi:', v.nimi); if (n === null) return; tallennaMerkinta({ laji: 'tiedosto', tnimi: v.nimi, mime: v.mime, sisalto: t, from: v.from }, n); piirra(); }), 'btn-secondary').title = 'Tallenna tekstitiedosto nimellä (max 100 kt)';
           if (v.koodi) { const pre = el('pre', null, v.koodi); pre.style.cssText = 'max-height:220px;overflow:auto;margin:3px 0 0;padding:3px 5px;font-size:11px;white-space:pre-wrap;word-break:break-all;background:rgba(0,0,0,.08);border-radius:3px;user-select:text;width:100%'; cc.append(pre); }
