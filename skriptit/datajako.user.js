@@ -6,7 +6,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.8.1
+// @version      0.8.3
 // @description  Salattu chat + tiedostojako asun (figure) kautta. Vain samassa hotellihuoneessa. Ei palvelinmuutoksia.
 // @kupla-oletus on
 // @author       re-lab
@@ -304,7 +304,10 @@
   }
   function vastaaKutsuihin() { const omat = ase.huoneet.filter(x => x.id !== YHTEINEN && (x.avoin || x.jaettu || ilmoitetut.has(x.id))); omat.forEach((x, i) => setTimeout(() => ilmoitaChat(x.id), 700 + i * 1400 + Math.random() * 1200)); return omat.length; }
   function lasnaLista(h) { const m = lasna.get(h), paikalla = new Set(yksikot().map(u => u.name)); return m ? [...m.keys()].filter(n => paikalla.has(n)) : []; }
-  function lasnaTick() { const r = huoneId(); if (r !== lasnaHuone) { lasnaHuone = r; if (r) { lasna.clear(); setTimeout(() => { if (huoneId() === r) jonoon(YHTEINEN, T.LASNA, { r: 0 }); }, 2500); } } }
+  const historiaHaettu = new Set();
+  function lasnaTick() { const r = huoneId(); if (r !== lasnaHuone) { lasnaHuone = r; if (r) { lasna.clear(); setTimeout(() => { if (huoneId() === r) jonoon(YHTEINEN, T.LASNA, { r: 0 }); }, 2500); 
+    ase.huoneet.forEach((x, i) => { const av = r + '|' + x.id; if (historiaHaettu.has(av) || lista(x.id).length) return; historiaHaettu.add(av); setTimeout(() => { if (huoneId() === r && !lista(x.id).length) pyydaHistoria(x.id); }, 4000 + i * 2500); });   /* sivun lataus tyhjentaa viestit: pyyda ne niilta joilla ne ovat viela muistissa (kp 1.10.) */
+  } } }
   function kuittaa(huone, id) { if (ase.kuittaus === false || !id) return; let q = kuittausJono.get(huone); if (!q) kuittausJono.set(huone, q = { ids: new Set(), t: Date.now() }); q.ids.add(String(id).slice(0, 16)); }
   async function kasittele(huone, nimi, k) {
     const o = k.otsikko;
@@ -727,15 +730,15 @@
 
     // --- pienennys: vain otsikkopalkki jää (240 px), lukematta-määrä otsikossa, klikkaus/kaksoisklikkaus/– palauttaa; tila säilyy
     function asetaPien(p, tallenna) { pien = !!p; ase.pienennetty = pien; if (tallenna !== false) tallennaAse();
-      if (pien) lukematta = 0;
+      if (pien) { lukemattomat.delete(ase.valittu); lukematta = [...lukemattomat.values()].reduce((a, b) => a + b, 0); }
       if (pien) for (const [h2, l2] of viestit) maara.set(h2, l2.filter(v2 => !v2.oma).length);   // vain pienennyksen JÄLKEEN tulleet lasketaan
       nayta(runko, !pien); ikkuna.querySelectorAll('.dj-kahva').forEach(k => nayta(k, !pien)); ikkuna.style.width = pien ? '240px' : ((ase.ikkunaKoko && ase.ikkunaKoko.w) || 390) + 'px'; piensi.textContent = pien ? '▢' : '–'; piensi.title = pien ? 'Palauta ikkuna' : 'Pienennä (tai kaksoisklikkaa otsikkoa)';
-      if (!pien) { lukematta = 0; piirra(); } merkki(); }
+      if (!pien) { lukemattomat.delete(ase.valittu); lukematta = [...lukemattomat.values()].reduce((a, b) => a + b, 0); piirra(); } merkki(); }
     // --- avaaja
     const avaaja = el('button', 'btn btn-primary btn-sm dj-ikkuna', '💬', { type: 'button', title: 'Datajako' });   // kp 1.10. "ois kiva jos ei olis noin ruma": pelkkä kuplakuvake, nimi hiiren alle
     Object.assign(avaaja.style, { position: 'fixed', left: '12px', top: '110px', zIndex: '450', width: '34px', height: '34px', padding: '0', borderRadius: '50%', fontSize: '16px', lineHeight: '34px', textAlign: 'center', boxShadow: '0 2px 6px rgba(0,0,0,.35)' });   // ylävasen: alavasemmalla nappi jäi huoneen omistaja-/sisustuspainikkeiden alle (kp ei löytänyt 1.10.)
-    let lukematta = 0; const merkki = () => { const n = !paalla() ? ' (pois)' : lukematta ? ' (' + lukematta + ')' : ''; avaaja.textContent = !paalla() ? '💬' : lukematta ? String(lukematta) : '💬'; avaaja.title = 'Datajako' + n; avaaja.style.opacity = paalla() ? '1' : '.55'; avaaja.style.background = lukematta ? '#d33' : ''; otsikkoTeksti.textContent = 'Datajako' + n; otsikko.style.filter = lukematta && pien ? 'brightness(1.35)' : ''; };
-    avaaja.onclick = () => { ikkuna.style.display = ikkuna.style.display === 'none' ? '' : 'none'; if (ikkuna.style.display !== 'none') { lukematta = 0; merkki(); piirra(); } };
+    const lukemattomat = new Map(); let lukematta = 0; const merkki = () => { const n = !paalla() ? ' (pois)' : lukematta ? ' (' + lukematta + ')' : ''; avaaja.textContent = !paalla() ? '💬' : lukematta ? String(lukematta) : '💬'; avaaja.title = 'Datajako' + n + (lukematta ? ' - ' + [...lukemattomat].filter(([, m]) => m).map(([h, m]) => ((ase.huoneet.find(x => x.id === h) || {}).nimi || h) + ': ' + m).join(', ') : ''); avaaja.style.opacity = paalla() ? '1' : '.55'; avaaja.style.background = lukematta ? '#d33' : ''; otsikkoTeksti.textContent = 'Datajako' + n; otsikko.style.filter = lukematta && pien ? 'brightness(1.35)' : ''; };
+    avaaja.onclick = () => { ikkuna.style.display = ikkuna.style.display === 'none' ? '' : 'none'; if (ikkuna.style.display !== 'none') { lukemattomat.delete(ase.valittu); lukematta = [...lukemattomat.values()].reduce((a, b) => a + b, 0); merkki(); piirra(); } };
     sulje.onclick = () => { ikkuna.style.display = 'none'; };
     // avausnappi on raahattava ja muistaa paikkansa (ase.avaajaPaikka); raahaus ei laukaise avausta
     const rajaa = (x, y) => ({ x: Math.min(Math.max(0, x), innerWidth - avaaja.offsetWidth - 2), y: Math.min(Math.max(0, y), innerHeight - avaaja.offsetHeight - 2) });
@@ -811,7 +814,7 @@
     // --- piirto
     function piirra() {
       const hs = ase.huoneet; if (!ase.valittu && hs.length) ase.valittu = hs[0].id;
-      valinta.replaceChildren(); if (!ase.valittu) valinta.append(el('option', null, '(valitse chat)', { value: '', selected: 'selected' })); for (const h of hs) { const o = el('option', null, '# ' + (h.nimi === h.id ? h.id : h.nimi), { value: h.id }); if (h.id === ase.valittu) o.selected = true; valinta.append(o); }
+      valinta.replaceChildren(); if (!ase.valittu) valinta.append(el('option', null, '(valitse chat)', { value: '', selected: 'selected' })); for (const h of hs) { const lk = lukemattomat.get(h.id) || 0; const o = el('option', null, '# ' + (h.nimi === h.id ? h.id : h.nimi) + (lk ? '  (' + lk + ' uutta)' : ''), { value: h.id }); if (h.id === ase.valittu) o.selected = true; valinta.append(o); }
       valinta.append(el('option', null, '+ uusi chat…', { value: '__liity' }));
       if (ase.valittu && ase.valittu !== YHTEINEN) valinta.append(el('option', null, '✏ nimeä tämä chat', { value: '__nimea' }));
       if (ase.valittu) valinta.append(el('option', null, '🧹 tyhjennä viestit (vain omasta paneelistasi)', { value: '__tyhjenna' }));
@@ -909,7 +912,7 @@
       else if (v === '__tyhjenna') { const id = ase.valittu, h = ase.huoneet.find(x => x.id === id); valinta.value = id || ''; if (!id) return;
         if (v === '__tyhjenna') { if (confirm('Tyhjennetäänkö chatin ' + ((h && h.nimi) || id) + ' viestit omasta paneelistasi? Muiden paneeleihin ei tapahdu mitään.')) { tyhjennaHuone(id); piirra(); } }
       }
-      else { ase.valittu = v; tallennaAse(); piirra(); }
+      else { ase.valittu = v; lukemattomat.delete(v); lukematta = [...lukemattomat.values()].reduce((a, b) => a + b, 0); merkki(); tallennaAse(); piirra(); }
     };
     liityNappi.onclick = () => {
       const sala = liityKentta.value.trim();
@@ -972,12 +975,15 @@
     // --- päivitys viesteistä + lukematta-merkki
     const maara = new Map();
     kuuntelijat.add(() => {
-      let uusia = 0; for (const [h, l] of viestit) { const e = maara.get(h) || 0; const m = l.filter(v => !v.oma).length; if (m > e) uusia += m - e; maara.set(h, m); }
-      if (uusia && (ikkuna.style.display === 'none' || pien)) lukematta += uusia;
+      const piilossa = ikkuna.style.display === 'none' || pien;
+      for (const [h, l] of viestit) { const e = maara.get(h) || 0, m = l.filter(v => !v.oma).length; maara.set(h, m);
+        if (m > e && (piilossa || h !== ase.valittu)) lukemattomat.set(h, (lukemattomat.get(h) || 0) + (m - e)); }   // avoin ja valittu chat ei kerryta lukemattomia
+      if (!piilossa) lukemattomat.delete(ase.valittu);
+      lukematta = [...lukemattomat.values()].reduce((a, b) => a + b, 0);
       merkki(); piirraTauko();
     });
     document.body.append(ikkuna, avaaja); asetaPien(pien, false); if (!pien) piirra();
-    VW.kuplaDatajakoUI = { ikkuna, avaaja, piirra, asetaTiedosto, avaa: () => { ikkuna.style.display = ''; lukematta = 0; if (pien) asetaPien(false); else { merkki(); piirra(); } }, pienenna: p => asetaPien(p), onPien: () => pien };
+    VW.kuplaDatajakoUI = { ikkuna, avaaja, piirra, asetaTiedosto, avaa: () => { ikkuna.style.display = ''; lukemattomat.delete(ase.valittu); lukematta = [...lukemattomat.values()].reduce((a, b) => a + b, 0); if (pien) asetaPien(false); else { merkki(); piirra(); } }, pienenna: p => asetaPien(p), onPien: () => pien };
   }
   try { teeUI(); } catch (e) { console.warn('[datajako] UI:', e); }
 })();
