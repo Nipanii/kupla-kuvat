@@ -6,7 +6,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.15.0
+// @version      0.16.0
 // @description  Salattu chat + tiedostojako asun (figure) kautta. Vain samassa hotellihuoneessa. Ei palvelinmuutoksia.
 // @kupla-oletus on
 // @author       re-lab
@@ -53,7 +53,7 @@
     if (len > n - 4 || n - 4 - len > 3) return null;
     return buf.slice(4, 4 + len);
   }
-  const VERSIO = '0.15.0';   /* pida sama kuin @version: kerrotaan kuplaDatajako.versio, jotta nakee kumpi versio kussakin clientissa pyorii */
+  const VERSIO = '0.16.0';   /* pida sama kuin @version: kerrotaan kuplaDatajako.versio, jotta nakee kumpi versio kussakin clientissa pyorii */
   const TE = new TextEncoder(), TD = new TextDecoder();
   // kehys: [tyyppi u8][otsikon pituus u16][otsikko JSON][runko]
   const T = { TEKSTI: 1, PALA: 2, POISTA: 3, TARVITSEN: 4, TOIMINTO: 5, KUITTAUS: 6, LASNA: 7, KUTSU: 8, HISTORIA: 9, TARJOUS: 10, LISAOSAT: 11 };
@@ -250,12 +250,28 @@
   // SYY (kp 1.10.): kanava on hidas (2400 tavua / 330 ms), eika kukaan halua kaikkia tiedostoja automaattisesti.
   // RAJA: kun lahettaja lataa sivun uudelleen tai poistuu, lahetetyt tyhjenee ja tarjous jaa roikkumaan - Hae
   // kertoo silloin "lahettaja ei ole huoneessa" tai "ei vastaa". Tiedosto EI siirry kolmannen kautta, mika on tarkoitus.
-  function lahetaTiedosto(huone, blob, nimi) {
+  const tarjousLista = () => (Array.isArray(ase.tiedostotarjoukset) ? ase.tiedostotarjoukset : (ase.tiedostotarjoukset = []));
+  function muistaTarjous(huone, tied, url) {   /* vain OSOITE ja metatiedot, ei tavuja: ne noudetaan uudelleen vasta pyynnosta */
+    if (!url) return; const x = { id: tied.id, huone, nimi: tied.nimi, mime: tied.mime, size: tied.size, n: tied.n, url: String(url).slice(0, 400), ts: Date.now() };
+    ase.tiedostotarjoukset = tarjousLista().filter(y => y.id !== x.id).slice(-2); ase.tiedostotarjoukset.push(x); tallennaAse();
+  }
+  async function palautaLahetetty(huone, id) {   /* sivun lataus tyhjensi lahetetyt: haetaan lahteesta uudelleen */
+    const x = tarjousLista().find(y => y.id === String(id) && y.huone === huone); if (!x) return null;
+    try {
+      const r = await fetch(x.url, { cache: 'no-store' }); if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = new Uint8Array(await r.arrayBuffer());
+      if (data.length !== (x.size | 0)) { tiedota(huone, 'Tarjottu tiedosto ' + x.nimi + ' on muuttunut lahteessa (' + data.length + ' vs ' + x.size + ' tavua), en palvele vanhaa tarjousta'); return null; }
+      const tied = { id: x.id, nimi: x.nimi, mime: x.mime, size: data.length, n: Math.max(1, Math.ceil(data.length / CHUNK)) };
+      lahetetyt.set(huone + '|' + x.id, { tied, data }); return { tied, data };
+    } catch (e) { tiedota(huone, 'Tiedostoa ' + x.nimi + ' ei saatu lahteesta: ' + e.message); return null; }
+  }
+  function lahetaTiedosto(huone, blob, nimi, url) {
     if (!paalla()) return null;
     return blob.arrayBuffer().then(ab => {
       const data = new Uint8Array(ab), id = uusiId(), n = Math.max(1, Math.ceil(data.length / CHUNK));
       const tied = { id, nimi, mime: blob.type || 'application/octet-stream', size: data.length, n };
       lahetetyt.set(huone + '|' + id, { tied, data });
+      muistaTarjous(huone, tied, url);
       const v = lisaa(huone, { id, tyyppi: 'tiedosto', from: '(sinä)', oma: true, ts: Date.now(), nimi, mime: tied.mime, size: data.length, blob, n, saatu: n, tarjottu: true, kehys: { tyyppi: T.TARJOUS, otsikko: Object.assign({ s: Date.now() }, tied) }, kuitattu: [], yritykset: 0 });
       lahetaKehys(huone, v);
       return id;
@@ -437,7 +453,18 @@
   function vastaaKutsuihin() { const omat = ase.huoneet.filter(x => x.id !== YHTEINEN && (x.avoin || x.jaettu || ilmoitetut.has(x.id))); omat.forEach((x, i) => setTimeout(() => ilmoitaChat(x.id), 700 + i * 1400 + Math.random() * 1200)); return omat.length; }
   function lasnaLista(h) { const m = lasna.get(h), paikalla = new Set(yksikot().map(u => u.name)); return m ? [...m.keys()].filter(n => paikalla.has(n)) : []; }
   const historiaHaettu = new Set();
-  function lasnaTick() { const r = huoneId(); if (r !== lasnaHuone) { lasnaHuone = r; if (r) { lasna.clear(); setTimeout(() => { if (huoneId() === r) { jonoon(YHTEINEN, T.LASNA, { r: 0, c: tagilista(), p: omaJulkinen() }); jonoon(YHTEINEN, T.LISAOSAT, { r: 0 }); if (omatLisaosat().length) ilmoitaLisaosat(); } }, 2500); 
+  let tarjouksetToistettu = false;
+  function toistaTarjoukset() {   /* vastaanottajan lista tyhjeni myos: tarjotaan muistetut uudelleen kerran per sivunlataus */
+    if (tarjouksetToistettu) return; tarjouksetToistettu = true;
+    const nyt = Date.now();
+    for (const x of tarjousLista()) { if (nyt - (x.ts || 0) > 6 * 3600 * 1000) continue; if (!ase.huoneet.some(h => h.id === x.huone)) continue;
+      if (lista(x.huone).some(v => v.id === x.id)) continue;
+      lisaa(x.huone, { id: x.id, tyyppi: 'tiedosto', from: '(sinä)', oma: true, ts: x.ts || nyt, nimi: x.nimi, mime: x.mime, size: x.size, blob: null, n: x.n, saatu: 0, tarjottu: true, lahde: x.url, kuitattu: [], yritykset: 0,
+        kehys: { tyyppi: T.TARJOUS, otsikko: { id: x.id, nimi: x.nimi, mime: x.mime, size: x.size, n: x.n, s: x.ts || nyt } } });
+      const v = lista(x.huone).find(y => y.id === x.id); if (v) setTimeout(() => lahetaKehys(x.huone, v), 1500 + Math.random() * 1500);
+    }
+  }
+  function lasnaTick() { const r = huoneId(); if (r !== lasnaHuone) { lasnaHuone = r; if (r) { lasna.clear(); toistaTarjoukset(); setTimeout(() => { if (huoneId() === r) { jonoon(YHTEINEN, T.LASNA, { r: 0, c: tagilista(), p: omaJulkinen() }); jonoon(YHTEINEN, T.LISAOSAT, { r: 0 }); if (omatLisaosat().length) ilmoitaLisaosat(); } }, 2500); 
     ase.huoneet.forEach((x, i) => { const av = r + '|' + x.id; if (historiaHaettu.has(av) || lista(x.id).length) return; historiaHaettu.add(av); setTimeout(() => { if (huoneId() === r && !lista(x.id).length) pyydaHistoria(x.id); }, 4000 + i * 2500); });   /* sivun lataus tyhjentaa viestit: pyyda ne niilta joilla ne ovat viela muistissa (kp 1.10.) */
   } } }
   function kuittaa(huone, id) { if (ase.kuittaus === false || !id) return; let q = kuittausJono.get(huone); if (!q) kuittausJono.set(huone, q = { ids: new Set(), t: Date.now() }); q.ids.add(String(id).slice(0, 16)); }
@@ -527,6 +554,12 @@
       if (!Array.isArray(o.puuttuu)) return;
       const l = lahetetyt.get(huone + '|' + o.id);
       if (l) { for (const i of o.puuttuu.slice(0, 40)) if (i >= 0 && i < l.tied.n) jonoon(huone, T.PALA, Object.assign({ i }, l.tied), l.data.subarray(i * CHUNK, (i + 1) * CHUNK)); return; }
+      if (tarjousLista().some(y => y.id === String(o.id) && y.huone === huone)) {   /* tarjous selvisi latauksesta: nouda lahteesta ja palvele */
+        const pyyd = o.puuttuu.slice(0, 40).map(x => x | 0);
+        palautaLahetetty(huone, String(o.id)).then(pal => { if (!pal) return;
+          for (const i of pyyd) if (i >= 0 && i < pal.tied.n) jonoon(huone, T.PALA, Object.assign({ i }, pal.tied), pal.data.subarray(i * CHUNK, (i + 1) * CHUNK)); });
+        return;
+      }
       if (!yvHuone(huone)) return;   /* HUONECHAT: en palvele tiedostoa jota en itse lahettanyt (kp: "ettei ne jää tahattomasti pyörii") */
       const vv = lista(huone).find(x => x.id === o.id); if (!vv || !vv.blob) return;   /* 1:1: palautan vastapuolelle sen mita han menetti */
       const pyyd = o.puuttuu.slice(0, 40).map(x => x | 0);
@@ -796,7 +829,7 @@
   if (!VW.__djValikkoRivi) { VW.__djValikkoRivi = true;
     (VW.kuplaValikkoJono = VW.kuplaValikkoJono || []).push({ kohde: 'hahmo', lisaosa: 'Datajako',
       nimi: ctx => VW.__djValikkoApi.nimi(ctx), nakyy: ctx => VW.__djValikkoApi.nakyy(ctx), tee: ctx => VW.__djValikkoApi.tee(ctx) }); }
-  VW.kuplaDatajako = { versio: VERSIO, tagilista, jaaLisaosa, poistaLisaosa, asennaLisaosa, kumoaLisaosa, ilmoitaLisaosat, lisaosaTarjoukset, lisaosatAjossa, lisaosatTarjotut, omatLisaosat, avaaYv, yvId, yvChat, yvHuone, yvAvaimet, haeTiedosto, historiaViestit, lahetetyt, tiedostot, lasnaLista, ilmoitaChat, vastaaKutsuihin, kutsut, ilmoitetut, pyydaHistoria, tarjoukset, tilasto, osoita, kohdeKlikista, kohdeGeometria, ase, viestit, lista, liity, uusiHuoneId, lahetaTeksti, lahetaTiedosto, lahetaToiminto, lahetaTiedostoUudelleen, omaNimi, poistaJaettu, poistaOmasta, poistuHuoneesta, tyhjennaHuone, nimeaHuone, pakkaaKuva, ajaToiminto, kuvaus, puhdasAsu, kuuntelijat, tallennaAse, tallennaMerkinta, komennot: { rekisteroi: rekisteroiKomento, poista: n => komennot.delete(komentoNimi(n)), lista: () => [...komennot.keys()] }, ajaKomento, jasenna, vieAsetukset, tuoAsetukset, siivoaTuonti, siivoaMerkinta, jono, CHUNK, GAP, RAJA, lue, yksikot };
+  VW.kuplaDatajako = { versio: VERSIO, tagilista, tarjousLista, palautaLahetetty, toistaTarjoukset, jaaLisaosa, poistaLisaosa, asennaLisaosa, kumoaLisaosa, ilmoitaLisaosat, lisaosaTarjoukset, lisaosatAjossa, lisaosatTarjotut, omatLisaosat, avaaYv, yvId, yvChat, yvHuone, yvAvaimet, haeTiedosto, historiaViestit, lahetetyt, tiedostot, lasnaLista, ilmoitaChat, vastaaKutsuihin, kutsut, ilmoitetut, pyydaHistoria, tarjoukset, tilasto, osoita, kohdeKlikista, kohdeGeometria, ase, viestit, lista, liity, uusiHuoneId, lahetaTeksti, lahetaTiedosto, lahetaToiminto, lahetaTiedostoUudelleen, omaNimi, poistaJaettu, poistaOmasta, poistuHuoneesta, tyhjennaHuone, nimeaHuone, pakkaaKuva, ajaToiminto, kuvaus, puhdasAsu, kuuntelijat, tallennaAse, tallennaMerkinta, komennot: { rekisteroi: rekisteroiKomento, poista: n => komennot.delete(komentoNimi(n)), lista: () => [...komennot.keys()] }, ajaKomento, jasenna, vieAsetukset, tuoAsetukset, siivoaTuonti, siivoaMerkinta, jono, CHUNK, GAP, RAJA, lue, yksikot };
 
   // ---------- ajastin (Worker: piilotettu välilehti ei kuristu) ----------
   let n = 0;
@@ -993,6 +1026,7 @@
         if (!v.blob && (!v.oma || v.palautettu) && !v.pyydetty && !tiedostot.has(h + '|' + v.id)) {   /* 0.12.0 click to receive: tavut lahtevat vasta tasta. 0.13.0: myos oma palautettu tiedosto */
           nappi('⬇ Hae (' + kb(v.size) + ')', () => { haeTiedosto(h, v.id); piirra(); }).title = 'Pyytää tiedoston lähettäjältä. Mitään ei siirry ennen tätä, ja vain lähettäjä voi lähettää sen.'; }
         else if (!v.blob && (!v.oma || v.palautettu)) { cc.append(el('span', 'message', ' · ladataan ' + v.saatu + '/' + v.n + (v.tila ? ' · ' + v.tila : ''))); nappi('↻ pyydä uudelleen', () => { const t = tiedostot.get(h + '|' + v.id); if (t) { t.pyynnot = 0; t.viim = 0; } v.tila = ''; piirra(); }, 'btn-secondary').title = 'Pyydä puuttuvia paloja lähettäjältä heti (toimii kun lähettäjä on huoneessa eikä ole ladannut sivua uudelleen)'; }
+        else if (!v.blob && v.oma && v.lahde) cc.append(el('span', 'message', ' · tarjolla lahteesta (selviaa sivun latauksesta)'));
         else if (!v.blob) cc.append(el('span', 'message', ' · ladataan ' + v.saatu + '/' + v.n));
         else {
           if (/^image\/(png|jpeg|webp|gif)$/.test(v.mime) && v.nayta) { const im = el('img'); im.style.cssText = 'display:block;width:auto;height:auto;max-width:100%;max-height:200px;object-fit:contain;margin-top:3px'; v.url = v.url || URL.createObjectURL(v.blob); im.src = v.url; cc.append(im); }
