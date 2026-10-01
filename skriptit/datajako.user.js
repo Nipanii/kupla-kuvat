@@ -6,7 +6,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.7.5
+// @version      0.7.6
 // @description  Salattu chat + tiedostojako asun (figure) kautta. Vain samassa hotellihuoneessa. Ei palvelinmuutoksia.
 // @kupla-oletus on
 // @author       re-lab
@@ -735,7 +735,7 @@
 
     // --- puhekupla (pelin chat-bubble-rakenne)
     function kupla(h, v) {
-      const w = el('div', 'chat-history-entry d-flex'); w.style.margin = '4px 0';
+      const w = el('div', 'chat-history-entry d-flex'); w.style.cssText = 'margin:4px 0;max-width:100%' + (v.oma ? ';justify-content:flex-end' : '');   /* Res 1.10.: omat viestit oikealle */
       const c = el('div', 'bubble-container visible');
       const bg = el('div', 'user-container-bg'); bg.style.backgroundColor = '#fff';
       const b = el('div', 'chat-bubble bubble-0 type-0'); b.style.cssText = 'max-width:100%;box-sizing:border-box;overflow:hidden';
