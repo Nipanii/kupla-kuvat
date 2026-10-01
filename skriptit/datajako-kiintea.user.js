@@ -6,7 +6,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.10.0
+// @version      0.15.0
 // @description  Salattu chat + tiedostojako asun (figure) kautta. Vain samassa hotellihuoneessa. Ei palvelinmuutoksia.
 // @kupla-oletus on
 // @author       re-lab
@@ -53,10 +53,10 @@
     if (len > n - 4 || n - 4 - len > 3) return null;
     return buf.slice(4, 4 + len);
   }
-  const VERSIO = '0.10.0';   /* pida sama kuin @version: kerrotaan kuplaDatajako.versio, jotta nakee kumpi versio kussakin clientissa pyorii */
+  const VERSIO = '0.15.0';   /* pida sama kuin @version: kerrotaan kuplaDatajako.versio, jotta nakee kumpi versio kussakin clientissa pyorii */
   const TE = new TextEncoder(), TD = new TextDecoder();
   // kehys: [tyyppi u8][otsikon pituus u16][otsikko JSON][runko]
-  const T = { TEKSTI: 1, PALA: 2, POISTA: 3, TARVITSEN: 4, TOIMINTO: 5, KUITTAUS: 6, LASNA: 7, KUTSU: 8, HISTORIA: 9 };
+  const T = { TEKSTI: 1, PALA: 2, POISTA: 3, TARVITSEN: 4, TOIMINTO: 5, KUITTAUS: 6, LASNA: 7, KUTSU: 8, HISTORIA: 9, TARJOUS: 10, LISAOSAT: 11 };
   function pakkaa(tyyppi, otsikko, runko) {
     const h = TE.encode(JSON.stringify(otsikko)), b = runko || new Uint8Array(0), o = new Uint8Array(3 + h.length + b.length);
     o[0] = tyyppi; o[1] = h.length >> 8; o[2] = h.length & 255; o.set(h, 3); o.set(b, 3 + h.length); return o;
@@ -245,21 +245,34 @@
     const id = uusiId(), v = lisaa(huone, { id, tyyppi: 'teksti', from: '(sinä)', oma: true, ts: Date.now(), teksti, kehys: { tyyppi: T.TEKSTI, otsikko: { id, x: teksti, s: Date.now() } }, kuitattu: [], yritykset: 0 });
     lahetaKehys(huone, v); return id;
   }
+  // 0.12.0 CLICK TO RECEIVE: lahetys on pelkka TARJOUS. Tavut lahtevat vasta kun vastaanottaja painaa Hae,
+  // ja ne lahtevat T.TARVITSEN-polkua, joka lukee lahetetyt-kartasta -> vain LAHETTAJA voi palvella tiedoston.
+  // SYY (kp 1.10.): kanava on hidas (2400 tavua / 330 ms), eika kukaan halua kaikkia tiedostoja automaattisesti.
+  // RAJA: kun lahettaja lataa sivun uudelleen tai poistuu, lahetetyt tyhjenee ja tarjous jaa roikkumaan - Hae
+  // kertoo silloin "lahettaja ei ole huoneessa" tai "ei vastaa". Tiedosto EI siirry kolmannen kautta, mika on tarkoitus.
   function lahetaTiedosto(huone, blob, nimi) {
     if (!paalla()) return null;
     return blob.arrayBuffer().then(ab => {
       const data = new Uint8Array(ab), id = uusiId(), n = Math.max(1, Math.ceil(data.length / CHUNK));
       const tied = { id, nimi, mime: blob.type || 'application/octet-stream', size: data.length, n };
       lahetetyt.set(huone + '|' + id, { tied, data });
-      lisaa(huone, { id, tyyppi: 'tiedosto', from: '(sinä)', oma: true, ts: Date.now(), nimi, mime: tied.mime, size: data.length, blob, n, saatu: n, kuitattu: [], laheti: Date.now(), yritykset: 1 });
-      for (let i = 0; i < n; i++) jonoon(huone, T.PALA, Object.assign({ i }, tied), data.subarray(i * CHUNK, (i + 1) * CHUNK));
+      const v = lisaa(huone, { id, tyyppi: 'tiedosto', from: '(sinä)', oma: true, ts: Date.now(), nimi, mime: tied.mime, size: data.length, blob, n, saatu: n, tarjottu: true, kehys: { tyyppi: T.TARJOUS, otsikko: Object.assign({ s: Date.now() }, tied) }, kuitattu: [], yritykset: 0 });
+      lahetaKehys(huone, v);
       return id;
     });
   }
-  function lahetaTiedostoUudelleen(huone, id) {
-    const l = lahetetyt.get(huone + '|' + id), v = lista(huone).find(x => x.id === id && x.oma); if (!l || !v) return false;
-    v.laheti = Date.now(); v.yritykset = (v.yritykset || 0) + 1; v.eiKuittausta = false;
-    for (let i = 0; i < l.tied.n; i++) jonoon(huone, T.PALA, Object.assign({ i }, l.tied), l.data.subarray(i * CHUNK, (i + 1) * CHUNK)); return true;
+  function lahetaTiedostoUudelleen(huone, id) {   /* tarjous uudelleen, ei tavuja */
+    const v = lista(huone).find(x => x.id === id && x.oma); if (!v || !v.kehys) return false;
+    lahetaKehys(huone, v); return true;
+  }
+  function haeTiedosto(huone, id) {   /* vastaanottajan Hae: luo palakirjanpidon ja pyytaa KAIKKI palat siita, joka tarjosi */
+    const v = lista(huone).find(x => x.id === id); if (!v || v.blob || (v.oma && !v.palautettu)) return false;
+    const palvelija = v.palautettu ? (v.valitti || v.from) : v.from;   /* palautettu oma tiedosto tulee VALITTAJALTA, ei itselta */
+    const av = huone + '|' + id; let t = tiedostot.get(av);
+    if (!t) { t = { pala: [], saatu: 0, n: v.n, nimi: v.nimi, mime: v.mime, size: v.size, from: palvelija, viim: 0, pyynnot: 0 }; tiedostot.set(av, t); }
+    t.viim = 0; t.pyynnot = 0; v.tila = ''; v.pyydetty = true;
+    const puuttuu = []; for (let i = 0; i < t.n; i++) if (!t.pala[i]) puuttuu.push(i);
+    jonoon(huone, T.TARVITSEN, { id, puuttuu }); paivita(); return true;
   }
   function lahetaToiminto(huone, a, x, y, koodi, kumoa) { if (!paalla()) return null; const id = uusiId(), t = { a, x: x | 0, y: y | 0, s: String(koodi || '').slice(0, SMAX) }; const u = kumoaKoodi({ a, u: kumoa }); if (u) t.u = u; const v = lisaa(huone, { id, tyyppi: 'toiminto', from: '(sinä)', oma: true, ts: Date.now(), t, kehys: { tyyppi: T.TOIMINTO, otsikko: Object.assign({ id }, t) }, kuitattu: [], yritykset: 0 }); lahetaKehys(huone, v); return id; }
   function poistaJaettu(huone, id) {
@@ -275,24 +288,120 @@
   const lasna = new Map(), lasnaVastattu = new Map(); let lasnaHuone = null;   // chat -> Map(nimi -> ts)
   const tagiHuone = new Map(), omaTagi = new Map();   /* lasnaolo kertoo chatit wire-TAGILLA: tagi nakyy kehyksissa jo nyt, salasana ei lahde koskaan */
   function tagiTieto(id) { if (omaTagi.has(id)) return omaTagi.get(id); avain(id).then(({ tag }) => { omaTagi.set(id, tag); tagiHuone.set(tag, id); }).catch(() => {}); return null; }
-  function tagilista() { ase.huoneet.forEach(x => tagiTieto(x.id)); return ase.huoneet.map(x => omaTagi.get(x.id)).filter(Boolean).slice(0, 12); }
+  function tagilista() { ase.huoneet.forEach(x => tagiTieto(x.id)); return ase.huoneet.filter(x => !x.yv).map(x => omaTagi.get(x.id)).filter(Boolean).slice(0, 12); }   /* 1:1 chatin tagi EI mene yhteiseen kanavaan: se paljastaisi kenen kanssa puhut */
   const kutsut = new Map();   // koodi -> { n, c, from, ts }: huoneessa ilmoitetut chatit (yksi napsautus liittää)
   const ilmoitetut = new Set();   // omat chatit jotka on ilmoitettu huoneeseen: toistetaan kun joku kysyy tai saapuu
-  async function ilmoitaChat(h) { const x = ase.huoneet.find(y => y.id === h); if (!x || h === YHTEINEN) return false; ilmoitetut.add(h); if (!x.jaettu) { x.jaettu = true; tallennaAse(); }
+  async function ilmoitaChat(h) { const x = ase.huoneet.find(y => y.id === h); if (!x || h === YHTEINEN || x.yv) return false;   /* 1:1 chatin koodi ei mene huoneeseen */ ilmoitetut.add(h); if (!x.jaettu) { x.jaettu = true; tallennaAse(); }
     if (x.avoin) jonoon(YHTEINEN, T.KUTSU, { n: (x.nimi || h).slice(0, 60), c: h });
     else { const { tag } = await avain(h); jonoon(YHTEINEN, T.KUTSU, { n: (x.nimi || h).slice(0, 60), t: tag, l: 1 }); }   // salasanallinen: vain nimi ja tunniste, salasana EI lahde huoneeseen
     return true; }
+  // ---------- Lisaosat (0.14.0): jakajan tarjoamat lisaosat, koodi vasta pyynnosta ----------
+  const LISAOSA_PALA = 1600, LEVY = 'http://127.0.0.1:9245/';
+  const lisaosatTarjotut = new Map();   // jakajan nimi -> { ts, v: [{k,n,d,z}] }
+  const lisaosatAjossa = new Map();     // k -> { from, n, kumoa }
+  const lisaosatPalat = new Map();      // 'from|k' -> { n, pala: [], nimi }
+  const omatLisaosat = () => (Array.isArray(ase.lisaosat) ? ase.lisaosat : (ase.lisaosat = []));
+  function lisaosaLista() { return omatLisaosat().slice(0, 8).map(x => ({ k: x.k, n: String(x.n || x.k).slice(0, 60), d: String(x.d || '').slice(0, 120), z: x.levy ? 0 : String(x.s || '').length })); }
+  function ilmoitaLisaosat() { jonoon(YHTEINEN, T.LISAOSAT, { v: lisaosaLista() }); return lisaosaLista().length; }   /* tyhja lista on SALLITTU: se on alasotto */
+  function jaaLisaosa(x) {
+    if (!x || !x.k || (typeof x.s !== 'string' && !x.levy)) return false;
+    const y = { k: String(x.k).slice(0, 40), n: String(x.n || x.k).slice(0, 60), d: String(x.d || '').slice(0, 120) };
+    if (x.levy) y.levy = String(x.levy).slice(0, 120); else y.s = String(x.s).slice(0, 4 * SMAX);
+    if (x.u) y.u = String(x.u).slice(0, SMAX);
+    ase.lisaosat = omatLisaosat().filter(z => z.k !== y.k); ase.lisaosat.push(y);
+    tallennaAse(); ilmoitaLisaosat(); paivita(); return y.k;
+  }
+  function poistaLisaosa(k) { const ennen = omatLisaosat().length; ase.lisaosat = omatLisaosat().filter(z => z.k !== String(k)); tallennaAse(); ilmoitaLisaosat(); paivita(); return omatLisaosat().length < ennen; }
+  async function lisaosaKoodi(x) {   /* levylta VASTA pyynnosta: paikallinen userscript-palvelin, ei selaimen muistia sita ennen */
+    if (typeof x.s === 'string' && x.s) return x.s;
+    if (!x.levy) return null;
+    const r = await fetch(LEVY + encodeURIComponent(x.levy), { cache: 'no-store' });
+    if (!r.ok) throw new Error('levy vastasi ' + r.status);
+    return await r.text();
+  }
+  async function vastaaLisaosa(kysyja, k) {
+    const x = omatLisaosat().find(y => y.k === String(k)); if (!x) return false;
+    let koodi; try { koodi = await lisaosaKoodi(x); } catch (e) { tiedota(YHTEINEN, 'Lisaosaa "' + (x.n || x.k) + '" ei saatu levylta: ' + e.message); return false; }
+    if (!koodi) return false;
+    const paketti = JSON.stringify({ s: String(koodi), u: String(x.u || ''), n: String(x.n || x.k) });
+    const n = Math.max(1, Math.ceil(paketti.length / LISAOSA_PALA));
+    for (let i = 0; i < n; i++) jonoon(YHTEINEN, T.LISAOSAT, { r: 2, to: kysyja, k: x.k, i, n, s: paketti.slice(i * LISAOSA_PALA, (i + 1) * LISAOSA_PALA) });
+    return n;
+  }
+  function asennaLisaosa(from, k) { jonoon(YHTEINEN, T.LISAOSAT, { r: 1, to: from, k }); lisaosatPalat.set(from + '|' + k, { n: 0, pala: [], nimi: from, odottaa: true }); paivita(); return true; }
+  function ajaLisaosa(k, nimi2, koodi, kumoa, from) {
+    /* Robon kaltainen automaattinen client ei saa jumittua confirm-dialogiin: ase.lisaosatAja === false estaa ajon kokonaan. */
+    if (ase.lisaosatAja === false) { tiedota(YHTEINEN, 'Lisaosa "' + nimi2 + '" saapui (' + from + ') mutta ajaminen on estetty tassa selaimessa'); paivita(); return 'ajaminen estetty'; }
+    const nayta = String(koodi).slice(0, 1200) + (String(koodi).length > 1200 ? '\n…(' + String(koodi).length + ' merkkia)' : '');
+    if (!confirm('Lisaosa "' + nimi2 + '" kayttajalta ' + from + '\n\n' + nayta + '\n\nAjetaanko tama koodi selaimessasi?')) return false;
+    const ennen = new Set(Array.prototype.slice.call(document.body.children));   /* mika oli jo olemassa: nimen perusteella ei voi erottaa omaa kopiota kayttajan omasta */
+    const v = {}; const tulos = ajaToiminto({ a: 'js', s: String(koodi), u: String(kumoa || '') }, from, false, v);
+    const lisatyt = [];
+    const kerays = setInterval(() => { for (const el2 of Array.prototype.slice.call(document.body.children)) if (!ennen.has(el2) && lisatyt.indexOf(el2) < 0) lisatyt.push(el2); }, 500);
+    setTimeout(() => clearInterval(kerays), 8000);   /* 8 s ikkuna: myohemmin ilmestyvia elementteja ei poisteta, ja se on sanottu ulos */
+    lisaosatAjossa.set(k, { from, n: nimi2, kumoa: () => { clearInterval(kerays); try { if (v.kumoa) v.kumoa(); } catch (e) {} for (const el2 of lisatyt) { try { el2.remove(); } catch (e) {} } } });
+    tiedota(YHTEINEN, 'Lisaosa "' + nimi2 + '" ajettu (' + from + '): ' + tulos); paivita(); return tulos;
+  }
+  function kumoaLisaosa(k, syy) { const x = lisaosatAjossa.get(String(k)); if (!x) return false; x.kumoa(); lisaosatAjossa.delete(String(k)); tiedota(YHTEINEN, 'Lisaosa "' + x.n + '" kumottu: ' + (syy || 'otit sen pois')); paivita(); return true; }
+  function lisaosaTarjoukset() {   /* vain ne jakajat jotka ovat NYT samassa huoneessa (kp: "if you are available in the same room, it appears") */
+    const paikalla = new Set(yksikot().map(u => u.name)), oma = omaNimi(), ulos = [];
+    for (const [nimi, t] of lisaosatTarjotut) { if (nimi === oma || !paikalla.has(nimi)) continue; for (const x of t.v) ulos.push(Object.assign({ from: nimi }, x)); }
+    return ulos;
+  }
+
+  // ---------- 1:1 chat (0.11.0) ----------
+  // Kumpikin julkaisee lasnaolossa ECDH P-256 -julkisen avaimen (kentta p). Chatin id = SHA-256('yv1:' + yhteinen salaisuus),
+  // eli molemmat johtavat saman id:n itse eika sita lahetetaa koskaan. Kutsu kertoo vain KENELLE se on, ei id:ta.
+  // RAJA: avainpari on selainkohtainen ja localStoragessa. Nimen voi vaihtaa toinen kayttaja, joten chat on sidottu
+  // AVAIMEEN eika nimeen: jos vastapuoli vaihtaa selainta, 1:1 chat on uusi chat eika vanha historia seuraa.
+  const yvAvaimet = new Map();   // nimi -> vastapuolen raaka julkinen avain (base64url)
+  const b64 = u => btoa(String.fromCharCode.apply(null, u)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const b64p = t2 => { const t = String(t2).replace(/-/g, '+').replace(/_/g, '/'); const r = atob(t + '='.repeat((4 - t.length % 4) % 4)); const u = new Uint8Array(r.length); for (let i = 0; i < r.length; i++) u[i] = r.charCodeAt(i); return u; };
+  let yvPari = null;
+  const omaJulkinen = () => (yvPari && yvPari.raaka) || null;
+  async function omaPari() {
+    if (yvPari) return yvPari;
+    try { const t = ase.yvAvain; if (t && t.y && t.r) {
+      const yks = await crypto.subtle.importKey('jwk', t.y, { name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+      yvPari = { yksityinen: yks, raaka: t.r }; return yvPari; } } catch (e) {}
+    const pari = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+    const raaka = b64(new Uint8Array(await crypto.subtle.exportKey('raw', pari.publicKey)));
+    try { ase.yvAvain = { y: await crypto.subtle.exportKey('jwk', pari.privateKey), r: raaka }; tallennaAse(); } catch (e) {}
+    yvPari = { yksityinen: pari.privateKey, raaka }; return yvPari;
+  }
+  omaPari().catch(() => {});   /* lammitetaan heti, jotta ensimmainen lasnaolokehys ehtii kantaa julkisen avaimen */
+  async function yvId(nimi) {
+    const toinen = yvAvaimet.get(nimi); if (!toinen) return null;
+    const pari = await omaPari();
+    const jul = await crypto.subtle.importKey('raw', b64p(toinen), { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+    const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: jul }, pari.yksityinen, 256));
+    const syote = new Uint8Array(4 + bits.length); syote.set(TE.encode('yv1:'), 0); syote.set(bits, 4);
+    const h = new Uint8Array(await crypto.subtle.digest('SHA-256', syote));
+    let x = ''; for (let i = 0; i < 24; i++) x += h[i].toString(16).padStart(2, '0'); return x;   /* 48 merkkia hexaa: normId ei muuta sita */
+  }
+  function yvChat(nimi) { return ase.huoneet.find(h => h.yv && h.vastapuoli === nimi) || null; }
+  const yvHuone = h => !!(ase.huoneet.find(x => x.id === h) || {}).yv;   /* 1:1 chat: vain kaksi osapuolta, joten palautus ei voi karata kolmannelle */
+  async function avaaYv(nimi) {
+    const id = await yvId(nimi); if (!id) return null;
+    liity(id, '1:1 ' + nimi);
+    const x = ase.huoneet.find(h => h.id === id); if (x) { x.yv = true; x.vastapuoli = nimi; tallennaAse(); }
+    jonoon(YHTEINEN, T.KUTSU, { yv: 1, to: nimi });   /* pelkka herate: id ei kulje, joten kolmas ei paase mukaan */
+    return id;
+  }
   // historia (0.8.0): liityin myohemmin. r0 = pyynto, r2 = tarjous ("minulla on N viestia"), r3 = valinta, r1 = viestit.
   // Jokainen paikalla oleva tarjoaa mita sen MUISTISSA on, ja pyytaja valitsee parhaan -> saa myos muiden kirjoittamat viestit,
   // ei vain vastaajan omia. Toisen kadun kautta tullut viesti merkitaan valittajalla, koska nimen voi silloin vaarentaa.
   const historiaVastattu = new Map(), tarjoukset = new Map(), historiaPyyntoAika = new Map(), historiaSaapuneet = new Map();
-  function historiaViestit(h) { return lista(h).filter(v => (v.tyyppi === 'teksti' && v.teksti && !v.jarj) || (v.tyyppi === 'toiminto' && v.t && String(v.t.s || '').length <= 600)).slice(-40); }   // kortit mukaan, mutta vain pienet (asukanava)
+  function historiaViestit(h) {
+    const yv = yvHuone(h);   /* huonechatissa vain omat tiedostot, 1:1:ssa myos vastapuolen - han sai ne minulta tai antoi ne minulle, eika kolmatta ole */
+    return lista(h).filter(v => (v.tyyppi === 'teksti' && v.teksti && !v.jarj) || (v.tyyppi === 'toiminto' && v.t && String(v.t.s || '').length <= 600)
+      || (v.tyyppi === 'tiedosto' && (v.oma ? lahetetyt.has(h + '|' + v.id) : yv && !!v.blob))).slice(-40);
+  }   // kortit mukaan, mutta vain pienet (asukanava)
   function pyydaHistoria(h) {
     const aika = Date.now();
     historiaVastattu.set(h, aika); historiaPyyntoAika.set(h, aika); tarjoukset.set(h, []);
     jonoon(h, T.HISTORIA, { r: 0 });
     setTimeout(() => jaaPyynnot(h, 0), 5000);
-    setTimeout(() => pyydaTiedostot(h, aika), 25000);   /* liitteet VASTA tekstien jalkeen: kaksi tekstikierrosta ehtivat valmiiksi (kp 1.10.) */
   }
   function jaaPyynnot(h, kierros) {   // jokaiselta pyydetaan VAIN ne id:t joita ei viela ole eika kukaan aiempi lupaa
     const tarj = (tarjoukset.get(h) || []).filter(x => x.i && x.i.length); if (!tarj.length) return;
@@ -305,32 +414,7 @@
     }
     if (!lahti && kierros < 1) return; if (kierros < 1) setTimeout(() => jaaPyynnot(h, kierros + 1), 15000);   // toinen kierros: jos jotain jai saamatta, kysytaan uudelleen
   }
-  function pyydaTiedostot(h, aika) {   /* pienimmasta suurimpaan, globaalisti: yksi pyynto per tiedosto, jotta jarjestys sailyy myos usean jakajan kesken */
-    if (aika && historiaPyyntoAika.get(h) !== aika) return;   /* vanhentunut ajastin ei saa napata uuden pyynnon tarjouksia: mitattu 1.10. liitteet tulivat 10 s eika 25 s kohdalla */
-    const tarj = (tarjoukset.get(h) || []).filter(x => x.f && x.f.length); if (!tarj.length) return;
-    const on = new Set(lista(h).map(v => String(v.id))), kaikki = [];
-    for (const t of tarj) for (const f of t.f) if (!on.has(f.i)) kaikki.push({ nimi: t.nimi, i: f.i, z: f.z | 0 });
-    kaikki.sort((a, b) => a.z - b.z);
-    const luvattu = new Set(), per = new Map(); let j = 0;
-    for (const f of kaikki) { if (luvattu.has(f.i) || j >= 6) continue; const n2 = (per.get(f.nimi) || 0) + 1; if (n2 > 4) continue;
-      luvattu.add(f.i); per.set(f.nimi, n2); setTimeout(() => jonoon(h, T.HISTORIA, { r: 5, to: f.nimi, i: [f.i] }), j * 1500); j++; }
-  }
-  async function jaaTiedostot(h, idt) {   /* valitan liitteen: alkuperainen lahettaja kulkee kentassa al, hi=1 merkitsee historiaksi */
-    if (ase.historia === false) return;
-    const oma = omaNimi(), halutut = new Set(idt);
-    const vs = lista(h).filter(v => v.tyyppi === 'tiedosto' && halutut.has(String(v.id))).sort((a, b) => (a.size | 0) - (b.size | 0)).slice(0, 3);
-    for (const v of vs) {
-      const tallessa = lahetetyt.get(h + '|' + v.id); let data = tallessa ? tallessa.data : null;
-      if (!data) { if (!v.blob) continue; try { data = new Uint8Array(await v.blob.arrayBuffer()); } catch (e) { continue; } }
-      if (!data.length || data.length > RAJA) continue;
-      const n = Math.max(1, Math.ceil(data.length / CHUNK));
-      const tied = { id: v.id, nimi: v.nimi, mime: v.mime, size: data.length, n, hi: 1, s: v.ts || Date.now() };
-      const kuka = v.oma ? oma : v.from; if (kuka && kuka !== oma) tied.al = String(kuka).slice(0, 40);
-      for (let i = 0; i < n; i++) jonoon(h, T.PALA, Object.assign({ i }, tied), data.subarray(i * CHUNK, (i + 1) * CHUNK));
-    }
-  }
-  function tarjoaTiedostot(h) { return lista(h).filter(v => v.tyyppi === 'tiedosto' && (v.size | 0) > 0 && (v.size | 0) <= RAJA && (v.blob || lahetetyt.has(h + '|' + v.id))).slice(-10).map(v => ({ i: String(v.id).slice(0, 16), z: v.size | 0 })); }
-  function tarjoaHistoria(h) { if (ase.historia === false) return; const vs = historiaViestit(h), fs = tarjoaTiedostot(h); if (!vs.length && !fs.length) return; jonoon(h, T.HISTORIA, { r: 2, m: vs.length, v: (vs[0] && vs[0].ts) || Date.now(), i: vs.map(v => String(v.id).slice(0, 16)).slice(-40), f: fs }); }   // id:t mukaan: pyytaja nakee kenella on MITA, ei vain montako
+  function tarjoaHistoria(h) { if (ase.historia === false) return; const vs = historiaViestit(h); if (!vs.length) return; jonoon(h, T.HISTORIA, { r: 2, m: vs.length, v: (vs[0] && vs[0].ts) || Date.now(), i: vs.map(v => String(v.id).slice(0, 16)).slice(-40) }); }   // id:t mukaan: pyytaja nakee kenella on MITA, ei vain montako
   const historiaErat = new Map();   // huone -> { erat: [[...]], ts }: pidetaan 2 min, jotta puuttuva era voidaan lahettaa uudelleen
   function vastaaHistoria(h, vain) {
     if (ase.historia === false) return;
@@ -340,9 +424,10 @@
     const sulje = () => { if (era.length) erat.push(era); era = []; pit = 0; };
     for (const v of vs) { const kuka = v.oma ? oma : v.from, e = { i: v.id, s: v.ts || Date.now() };
       if (v.tyyppi === 'toiminto') { e.k = { a: String(v.t.a), x: v.t.x | 0, y: v.t.y | 0, s: String(v.t.s || '').slice(0, 600) }; if (v.t.u) e.k.u = String(v.t.u).slice(0, 300); }
+      else if (v.tyyppi === 'tiedosto') e.d = { nimi: String(v.nimi || '').slice(0, 120), mime: String(v.mime || '').slice(0, 80), size: v.size | 0, n: v.n | 0 };
       else e.t = String(v.teksti).slice(0, 400);
       if (kuka && kuka !== oma) e.f = String(kuka).slice(0, 40);
-      const koko = (e.t ? e.t.length : (e.k.s.length + (e.k.u ? e.k.u.length : 0) + 30)) + (e.f ? e.f.length : 0) + 40; if (pit + koko > 900) sulje(); era.push(e); pit += koko; }
+      const koko = (e.t ? e.t.length : e.d ? (e.d.nimi.length + 60) : (e.k.s.length + (e.k.u ? e.k.u.length : 0) + 30)) + (e.f ? e.f.length : 0) + 40; if (pit + koko > 900) sulje(); era.push(e); pit += koko; }
     sulje();
     historiaErat.set(h, { erat, ts: Date.now() });
     erat.forEach((x, i) => jonoon(h, T.HISTORIA, { r: 1, p: i, n: erat.length, v: x }));
@@ -352,7 +437,7 @@
   function vastaaKutsuihin() { const omat = ase.huoneet.filter(x => x.id !== YHTEINEN && (x.avoin || x.jaettu || ilmoitetut.has(x.id))); omat.forEach((x, i) => setTimeout(() => ilmoitaChat(x.id), 700 + i * 1400 + Math.random() * 1200)); return omat.length; }
   function lasnaLista(h) { const m = lasna.get(h), paikalla = new Set(yksikot().map(u => u.name)); return m ? [...m.keys()].filter(n => paikalla.has(n)) : []; }
   const historiaHaettu = new Set();
-  function lasnaTick() { const r = huoneId(); if (r !== lasnaHuone) { lasnaHuone = r; if (r) { lasna.clear(); setTimeout(() => { if (huoneId() === r) jonoon(YHTEINEN, T.LASNA, { r: 0, c: tagilista() }); }, 2500); 
+  function lasnaTick() { const r = huoneId(); if (r !== lasnaHuone) { lasnaHuone = r; if (r) { lasna.clear(); setTimeout(() => { if (huoneId() === r) { jonoon(YHTEINEN, T.LASNA, { r: 0, c: tagilista(), p: omaJulkinen() }); jonoon(YHTEINEN, T.LISAOSAT, { r: 0 }); if (omatLisaosat().length) ilmoitaLisaosat(); } }, 2500); 
     ase.huoneet.forEach((x, i) => { const av = r + '|' + x.id; if (historiaHaettu.has(av) || lista(x.id).length) return; historiaHaettu.add(av); setTimeout(() => { if (huoneId() === r && !lista(x.id).length) pyydaHistoria(x.id); }, 4000 + i * 2500); });   /* sivun lataus tyhjentaa viestit: pyyda ne niilta joilla ne ovat viela muistissa (kp 1.10.) */
   } } }
   function kuittaa(huone, id) { if (ase.kuittaus === false || !id) return; let q = kuittausJono.get(huone); if (!q) kuittausJono.set(huone, q = { ids: new Set(), t: Date.now() }); q.ids.add(String(id).slice(0, 16)); }
@@ -362,22 +447,30 @@
     else if (k.tyyppi === T.PALA) {
       const av = huone + '|' + o.id; let t = tiedostot.get(av);
       if (!t) { t = { pala: [], saatu: 0, n: o.n, nimi: String(o.nimi || 'tiedosto').slice(0, 120), mime: String(o.mime || ''), size: o.size, from: nimi, viim: 0, pyynnot: 0 }; tiedostot.set(av, t);
-        lisaa(huone, { id: o.id, tyyppi: 'tiedosto', from: o.hi && o.al ? String(o.al).slice(0, 40) : nimi, ts: o.hi ? (+o.s || Date.now()) : Date.now(), nimi: t.nimi, mime: t.mime, size: o.size, blob: null, n: o.n, saatu: 0, historia: !!o.hi, valitti: o.hi ? nimi : undefined }); }   /* historiasta valitetty liite: nayttoon alkuperainen lahettaja, valittaja nakyviin, ei lasketa lukemattomiin */
+        lisaa(huone, { id: o.id, tyyppi: 'tiedosto', from: nimi, ts: Date.now(), nimi: t.nimi, mime: t.mime, size: o.size, blob: null, n: o.n, saatu: 0 }); }   /* vanha suora lahetys (0.11.0 ja vanhemmat): palat ilman tarjousta */
       if (t.from !== nimi) return; if (t.pala[o.i]) { if (t.saatu === t.n) kuittaa(huone, o.id); return; }   // kaksoiskappale valmiista: kuittaa uudelleen (aiempi kuittaus on voinut kadota)
       t.pala[o.i] = new Uint8Array(k.runko); t.saatu++; t.viim = Date.now(); t.pyynnot = 0;
       const v = lista(huone).find(x => x.id === o.id); if (v) { v.saatu = t.saatu; v.tila = ''; if (t.saatu === t.n) { v.blob = new Blob(t.pala, { type: t.mime }); kuittaa(huone, o.id); } }
       paivita();
+    } else if (k.tyyppi === T.TARJOUS) {
+      const id = String(o.id || '').slice(0, 16); if (!id || lista(huone).some(x => x.id === id)) { kuittaa(huone, id); return; }   /* sama tarjous uudelleen: kuittaa, ala kaksoista */
+      const n = Math.max(1, Math.min(4000, o.n | 0));
+      lisaa(huone, { id, tyyppi: 'tiedosto', from: nimi, ts: +o.s || Date.now(), nimi: String(o.nimi || 'tiedosto').slice(0, 120), mime: String(o.mime || '').slice(0, 80), size: Math.max(0, o.size | 0), blob: null, n, saatu: 0, tarjous: true });
+      kuittaa(huone, id);
     } else if (k.tyyppi === T.POISTA) {
       const l = lista(huone), v = l.find(x => x.id === o.id); if (v && v.from === nimi) { l.splice(l.indexOf(v), 1); tiedostot.delete(huone + '|' + o.id); paivita(); }
     } else if (k.tyyppi === T.HISTORIA) {
       if (o.r === 0) { if (Date.now() - (historiaVastattu.get(huone) || 0) > 8000) { historiaVastattu.set(huone, Date.now()); setTimeout(() => tarjoaHistoria(huone), 300 + Math.random() * 2000); } return; }   // tarjoa: "minulla on N viestia"
-      if (o.r === 2) { if (Date.now() - (historiaPyyntoAika.get(huone) || 0) > 8000) return; const t = tarjoukset.get(huone) || []; t.push({ nimi, m: Math.min(+o.m || 0, 40), v: +o.v || Date.now(), i: Array.isArray(o.i) ? o.i.map(x => String(x).slice(0, 16)).slice(0, 40) : [], f: Array.isArray(o.f) ? o.f.filter(x => x && x.i).map(x => ({ i: String(x.i).slice(0, 16), z: Math.max(0, Math.min(RAJA, x.z | 0)) })).slice(0, 10) : [] }); tarjoukset.set(huone, t); return; }
+      if (o.r === 2) { if (Date.now() - (historiaPyyntoAika.get(huone) || 0) > 8000) return; const t = tarjoukset.get(huone) || []; t.push({ nimi, m: Math.min(+o.m || 0, 40), v: +o.v || Date.now(), i: Array.isArray(o.i) ? o.i.map(x => String(x).slice(0, 16)).slice(0, 40) : [] }); tarjoukset.set(huone, t); return; }
       if (o.r === 3) { if (o.to === omaNimi()) { const vain = Array.isArray(o.i) ? new Set(o.i.map(x => String(x))) : null; setTimeout(() => vastaaHistoria(huone, vain), 300 + Math.random() * 800); } return; }   // minulta pyydettiin naita
       if (o.r === 4) { if (o.to === omaNimi() && Array.isArray(o.p)) lahetaHistoriaErat(huone, o.p.map(x => x | 0)); return; }   // puuttuvat erat uudelleen
-      if (o.r === 5) { if (o.to === omaNimi() && Array.isArray(o.i)) jaaTiedostot(huone, o.i.map(x => String(x).slice(0, 16))); return; }   // liitepyynto
       if (!Array.isArray(o.v)) return;
       if (o.n > 1) {   // numeroitu era: merkitse saapuneet ja pyyda aukot uudelleen
-        let st = historiaSaapuneet.get(huone); if (!st || st.from !== nimi || st.n !== o.n) { st = { from: nimi, n: o.n, saatu: new Set(), ajastin: null }; historiaSaapuneet.set(huone, st); }
+        /* 0.14.2 kp 1.10. "en saanu kaikkii viestei ku refresh. tuli vaa osa": tila oli HUONEKOHTAINEN, joten kun
+           kolme osapuolta vastaa (jaaPyynnot jakaa id:t kaikille), jokaisen eran saapuminen NOLLASI edellisen
+           aukkolaskennan -> puuttuvia eria ei pyydetty uudelleen keneltakaan. Avain on nyt huone JA vastaaja. */
+        const sav = huone + '|' + nimi;
+        let st = historiaSaapuneet.get(sav); if (!st || st.n !== o.n) { st = { from: nimi, n: o.n, saatu: new Set(), ajastin: null }; historiaSaapuneet.set(sav, st); }
         st.saatu.add(o.p | 0); clearTimeout(st.ajastin);
         if (st.saatu.size < o.n) st.ajastin = setTimeout(() => { const puuttuu = []; for (let i = 0; i < o.n; i++) if (!st.saatu.has(i)) puuttuu.push(i);
           if (puuttuu.length && (st.pyynnot = (st.pyynnot || 0) + 1) <= 3) jonoon(huone, T.HISTORIA, { r: 4, to: nimi, p: puuttuu }); }, 5000);
@@ -386,28 +479,60 @@
         // oma vanha viesti otetaan takaisin (muuten tyhjentynyt paneeli ei palaudu, kp 1.10. "toimii huonosti vanhojen haku"),
         // mutta se merkitaan valittajalla: nimen voi periaatteessa vaarentaa, joten lahde on nakyva.
         const pohja = { id: String(e.i).slice(0, 16), from: omaViesti ? '(sinä)' : kuka, oma: omaViesti, ts: +e.s || Date.now(), historia: true, valitti: nimi };
+        if (e.d && typeof e.d === 'object') {   /* tiedostotarjous historiasta: tavut haetaan vasta Hae-napista, ja vain lahettajalta */
+          if (omaViesti && !yvHuone(huone)) continue;   /* huonechat: oma vanha tiedosto olisi kuollut tarjous, koska vain lahettaja palvelee */
+          lisaa(huone, Object.assign(pohja, { tyyppi: 'tiedosto', nimi: String(e.d.nimi || 'tiedosto').slice(0, 120), mime: String(e.d.mime || '').slice(0, 80), size: Math.max(0, e.d.size | 0), n: Math.max(1, Math.min(4000, e.d.n | 0)), blob: null, saatu: 0, tarjous: true, palautettu: omaViesti })); continue; }
         if (e.k && typeof e.k === 'object') { if (ase.toiminnot === false) continue;   // kortti: sama tarkistus kuin suorassa vastaanotossa, ajaminen vaatii yha ▶ ja varmistuksen
           const a = String(e.k.a); if (!Object.prototype.hasOwnProperty.call(TOIMINNOT, a) || typeof e.k.s !== 'string') continue;
           const t = { a, x: Math.max(0, Math.min(255, e.k.x | 0)), y: Math.max(0, Math.min(255, e.k.y | 0)), s: String(e.k.s).slice(0, SMAX) }; const u = kumoaKoodi({ a, u: e.k.u }); if (u) t.u = u;
           lisaa(huone, Object.assign(pohja, { tyyppi: 'toiminto', t })); continue; }
         lisaa(huone, Object.assign(pohja, { tyyppi: 'teksti', teksti: String(e.t || '').slice(0, 400) })); }
     } else if (k.tyyppi === T.KUTSU) {
+      if (o.yv) { if (o.to !== omaNimi() || yvChat(nimi)) return; kutsut.set('yv:' + nimi, { n: '1:1 ' + nimi, yv: true, from: nimi, ts: Date.now() }); paivita(); return; }   /* vain minulle, ja vain jos chattia ei jo ole */
       const nimiX = String(o.n || '').replace(/[<>]/g, '').slice(0, 60) || 'chat';
       if (o.l && o.t) { kutsut.set('lukko:' + o.t, { n: nimiX, tag: String(o.t).slice(0, 8), lukko: true, from: nimi, ts: Date.now() }); paivita(); return; }   // lukittu: liittyja syottaa salasanan, tunniste kertoo onko se oikea
       const c = normId(String(o.c || '')); if (c.length < 6 || c.length > 80 || c === YHTEINEN) return;
       kutsut.set(c, { n: nimiX, c, from: nimi, ts: Date.now() }); paivita();
     } else if (k.tyyppi === T.LASNA) {
       let m = lasna.get(huone); if (!m) lasna.set(huone, m = new Map()); m.set(nimi, Date.now());
+      if (typeof o.p === 'string' && /^[A-Za-z0-9_-]{80,200}$/.test(o.p)) yvAvaimet.set(nimi, o.p);   /* vastapuolen julkinen avain: 1:1 chatin id johdetaan siita, ei nimesta */
       if (Array.isArray(o.c)) for (const t2 of o.c.slice(0, 12)) { const id2 = tagiHuone.get(String(t2).slice(0, 12)); if (!id2) continue; let mm = lasna.get(id2); if (!mm) lasna.set(id2, mm = new Map()); mm.set(nimi, Date.now()); }   /* chatkohtainen lasnaolo: vain omat tunnetut tagit tunnistetaan, muut ohitetaan */
-      if (o.r === 0 && Date.now() - (lasnaVastattu.get(huone) || 0) > 6000) { lasnaVastattu.set(huone, Date.now()); setTimeout(() => jonoon(huone, T.LASNA, { r: 1, c: tagilista() }), 300 + Math.random() * 2000); vastaaKutsuihin(); }   // kysyjälle: vastaa läsnäololla JA ilmoita kaikki omat avoimet chatit uudelleen
+      if (o.r === 0 && Date.now() - (lasnaVastattu.get(huone) || 0) > 6000) { lasnaVastattu.set(huone, Date.now()); setTimeout(() => jonoon(huone, T.LASNA, { r: 1, c: tagilista(), p: omaJulkinen() }), 300 + Math.random() * 2000); vastaaKutsuihin(); }   // kysyjälle: vastaa läsnäololla JA ilmoita kaikki omat avoimet chatit uudelleen
+      paivita();
+    } else if (k.tyyppi === T.LISAOSAT) {
+      if (o.r === 0) { if (omatLisaosat().length) setTimeout(() => ilmoitaLisaosat(), 300 + Math.random() * 1500); return; }   // joku kysyi: kerro omat
+      if (o.r === 1) { if (o.to === omaNimi()) vastaaLisaosa(nimi, String(o.k || '').slice(0, 40)); return; }   // koodipyynto: levylta vasta nyt
+      if (o.r === 2) {
+        if (o.to !== omaNimi()) return;
+        const av = nimi + '|' + String(o.k || '').slice(0, 40), st = lisaosatPalat.get(av); if (!st || !st.odottaa) return;   /* vain se mita ITSE pyysin */
+        st.n = Math.max(1, Math.min(40, o.n | 0)); st.pala[o.i | 0] = String(o.s || '');
+        let kaikki = 0; for (let i = 0; i < st.n; i++) if (typeof st.pala[i] === 'string') kaikki++;
+        if (kaikki < st.n) { paivita(); return; }
+        lisaosatPalat.delete(av);
+        let paketti = null; try { paketti = JSON.parse(st.pala.join('')); } catch (e) { tiedota(YHTEINEN, 'Lisaosan koodi tuli rikkinaisena, yrita uudelleen'); paivita(); return; }
+        if (!paketti || typeof paketti.s !== 'string') { paivita(); return; }
+        ajaLisaosa(String(o.k).slice(0, 40), String(paketti.n || o.k).slice(0, 60), paketti.s, paketti.u, nimi);
+        return;
+      }
+      if (!Array.isArray(o.v)) return;
+      const v2 = o.v.filter(x => x && x.k).slice(0, 8).map(x => ({ k: String(x.k).slice(0, 40), n: String(x.n || x.k).slice(0, 60), d: String(x.d || '').slice(0, 120), z: Math.max(0, x.z | 0) }));
+      lisaosatTarjotut.set(nimi, { ts: Date.now(), v: v2 });
+      for (const [kk, tila] of [...lisaosatAjossa]) if (tila.from === nimi && !v2.some(x => x.k === kk)) kumoaLisaosa(kk, 'jakaja otti sen alas');   /* kill switch */
       paivita();
     } else if (k.tyyppi === T.KUITTAUS) {
       if (!Array.isArray(o.k)) return; let muuttui = false;
       for (const id of o.k.slice(0, 40)) { const v = lista(huone).find(x => x.id === String(id) && x.oma); if (v && v.kuitattu && !v.kuitattu.includes(nimi)) { v.kuitattu.push(nimi); v.eiKuittausta = false; tilasto.kuitattu++; muuttui = true; } }
       if (muuttui) paivita();
     } else if (k.tyyppi === T.TARVITSEN) {
-      const l = lahetetyt.get(huone + '|' + o.id); if (!l || !Array.isArray(o.puuttuu)) return;
-      for (const i of o.puuttuu.slice(0, 40)) if (i >= 0 && i < l.tied.n) jonoon(huone, T.PALA, Object.assign({ i }, l.tied), l.data.subarray(i * CHUNK, (i + 1) * CHUNK));
+      if (!Array.isArray(o.puuttuu)) return;
+      const l = lahetetyt.get(huone + '|' + o.id);
+      if (l) { for (const i of o.puuttuu.slice(0, 40)) if (i >= 0 && i < l.tied.n) jonoon(huone, T.PALA, Object.assign({ i }, l.tied), l.data.subarray(i * CHUNK, (i + 1) * CHUNK)); return; }
+      if (!yvHuone(huone)) return;   /* HUONECHAT: en palvele tiedostoa jota en itse lahettanyt (kp: "ettei ne jää tahattomasti pyörii") */
+      const vv = lista(huone).find(x => x.id === o.id); if (!vv || !vv.blob) return;   /* 1:1: palautan vastapuolelle sen mita han menetti */
+      const pyyd = o.puuttuu.slice(0, 40).map(x => x | 0);
+      vv.blob.arrayBuffer().then(ab => { const data = new Uint8Array(ab), n = Math.max(1, Math.ceil(data.length / CHUNK));
+        const tied = { id: vv.id, nimi: vv.nimi, mime: vv.mime, size: data.length, n };
+        for (const i of pyyd) if (i >= 0 && i < n) jonoon(huone, T.PALA, Object.assign({ i }, tied), data.subarray(i * CHUNK, (i + 1) * CHUNK)); }).catch(() => {});
     } else if (k.tyyppi === T.TOIMINTO) {
       if (ase.toiminnot === false) return;
       kuittaa(huone, o.id);
@@ -580,7 +705,7 @@
       }
       for (const [h, q] of kuittausJono) if (nyt - q.t >= 400) { const ids = [...q.ids].slice(0, 25); ids.forEach(i => q.ids.delete(i)); jonoon(h, T.KUITTAUS, { k: ids }); if (q.ids.size) q.t = nyt; else kuittausJono.delete(h); }
       for (const [h, l] of viestit) for (const v of l) if (v.oma && v.kuitattu && !v.kuitattu.length && !v.eiKuittausta && v.laheti) {   // oma viesti ilman kuittausta: toista kaksi kertaa, sitten merkitse
-        const odotus = (v.tyyppi === 'tiedosto' ? (v.n || 1) * GAP + 10000 : (jono.length + 1) * GAP + (v.yritykset <= 1 ? 5000 : 9000));
+        const odotus = (v.tyyppi === 'tiedosto' && !v.tarjottu ? (v.n || 1) * GAP + 10000 : (jono.length + 1) * GAP + (v.yritykset <= 1 ? 5000 : 9000));
         if (nyt - v.laheti > odotus) { if (v.kehys && v.yritykset < 3) lahetaKehys(h, v); else { v.eiKuittausta = true; paivita(); } }
       }
     } finally { lukee = false; }
@@ -655,7 +780,23 @@
     return new Promise(r => c.toBlob(r, 'image/webp', laatu));
   }
 
-  VW.kuplaDatajako = { versio: VERSIO, tagilista, lasnaLista, ilmoitaChat, vastaaKutsuihin, kutsut, ilmoitetut, pyydaHistoria, tarjoukset, tilasto, osoita, kohdeKlikista, kohdeGeometria, ase, viestit, lista, liity, uusiHuoneId, lahetaTeksti, lahetaTiedosto, lahetaToiminto, lahetaTiedostoUudelleen, omaNimi, poistaJaettu, poistaOmasta, poistuHuoneesta, tyhjennaHuone, nimeaHuone, pakkaaKuva, ajaToiminto, kuvaus, puhdasAsu, kuuntelijat, tallennaAse, tallennaMerkinta, komennot: { rekisteroi: rekisteroiKomento, poista: n => komennot.delete(komentoNimi(n)), lista: () => [...komennot.keys()] }, ajaKomento, jasenna, vieAsetukset, tuoAsetukset, siivoaTuonti, siivoaMerkinta, jono, CHUNK, GAP, RAJA, lue, yksikot };
+  // 1:1 chatin sisaankaynti PELIN omassa hahmovalikossa (kp 1.10. "lisätään right click valikkoon lähetä viesti,
+  // jos sillä on toi extensio ja on huoneessa"). Sopimus on klikkikavelyn dokumentoima jono: kohde 'hahmo' = joku muu
+  // kuin sina, ctx.hahmo = { nimi, tyyppi, ... }. tyyppi 1 = kayttaja, ei lemmikki eika botti.
+  // NAKYY-EHTO: yvAvaimet.has(nimi) tarkoittaa etta han on LAHETTANYT lasnaolossa julkisen avaimensa, eli hanella on
+  // Datajako 0.11.0+ ja olemme olleet samassa huoneessa sen jalkeen. Huoneessa olo tulee siita etta klikkasit hanen
+  // hahmoaan. RAJA: jos hanen Datajako on ASENNETTU mutta kytketty pois, rivi nakyy mutta kutsu ei tavoita ketaan.
+  // MITATTU 1.10.: jokainen uudelleenasennus lisasi rivin uudelleen (2 rivia kp:n valikossa). Rivi tyontetaan
+  // jonoon VAIN KERRAN ja se delegoi tahan apiin, jonka uusin skriptiversio ylikirjoittaa -> ei kaksoiskappaleita
+  // eika vanhentuneita sulkeumia (vanha rivi olisi osoittanut edellisen latauksen yvAvaimet-karttaan).
+  VW.__djValikkoApi = {
+    nimi: ctx => yvChat(ctx && ctx.hahmo && ctx.hahmo.nimi) ? 'Avaa 1:1 chat' : 'L\u00e4het\u00e4 viesti',
+    nakyy: ctx => !!(ctx && ctx.hahmo && ctx.hahmo.nimi && ctx.hahmo.tyyppi === 1 && paalla() && yvAvaimet.has(ctx.hahmo.nimi)),
+    tee: async ctx => { const n = ctx.hahmo.nimi, id = await avaaYv(n); if (!id) return n + ': ei Datajakoa'; try { VW.kuplaDatajakoUI && VW.kuplaDatajakoUI.avaa(); } catch (e) {} return '1:1 chat: ' + n; } };
+  if (!VW.__djValikkoRivi) { VW.__djValikkoRivi = true;
+    (VW.kuplaValikkoJono = VW.kuplaValikkoJono || []).push({ kohde: 'hahmo', lisaosa: 'Datajako',
+      nimi: ctx => VW.__djValikkoApi.nimi(ctx), nakyy: ctx => VW.__djValikkoApi.nakyy(ctx), tee: ctx => VW.__djValikkoApi.tee(ctx) }); }
+  VW.kuplaDatajako = { versio: VERSIO, tagilista, jaaLisaosa, poistaLisaosa, asennaLisaosa, kumoaLisaosa, ilmoitaLisaosat, lisaosaTarjoukset, lisaosatAjossa, lisaosatTarjotut, omatLisaosat, avaaYv, yvId, yvChat, yvHuone, yvAvaimet, haeTiedosto, historiaViestit, lahetetyt, tiedostot, lasnaLista, ilmoitaChat, vastaaKutsuihin, kutsut, ilmoitetut, pyydaHistoria, tarjoukset, tilasto, osoita, kohdeKlikista, kohdeGeometria, ase, viestit, lista, liity, uusiHuoneId, lahetaTeksti, lahetaTiedosto, lahetaToiminto, lahetaTiedostoUudelleen, omaNimi, poistaJaettu, poistaOmasta, poistuHuoneesta, tyhjennaHuone, nimeaHuone, pakkaaKuva, ajaToiminto, kuvaus, puhdasAsu, kuuntelijat, tallennaAse, tallennaMerkinta, komennot: { rekisteroi: rekisteroiKomento, poista: n => komennot.delete(komentoNimi(n)), lista: () => [...komennot.keys()] }, ajaKomento, jasenna, vieAsetukset, tuoAsetukset, siivoaTuonti, siivoaMerkinta, jono, CHUNK, GAP, RAJA, lue, yksikot };
 
   // ---------- ajastin (Worker: piilotettu välilehti ei kuristu) ----------
   let n = 0;
@@ -673,7 +814,7 @@
       try { navigator.clipboard.writeText(txt).then(ok, vara); } catch (e) { vara(); } };
     const nfs = t => String(t).replace(/\u2014/g, '-');   // pelin fontti piirtää em-viivan nuottimerkkinä: vain näytössä, kopiointi ja lähetys säilyttävät alkuperäisen
     const kb = b => b < 1024 ? b + ' t' : (b / 1024).toFixed(b < 10240 ? 1 : 0) + ' kt';
-    const st = el('style', null, '.dj-pois{display:none!important} .dj-ikkuna .chat-content,.dj-ikkuna .chat-content *{user-select:text!important;-webkit-user-select:text!important;cursor:text} .dj-ikkuna .chat-content button{cursor:pointer;user-select:none!important}'); document.head.append(st);   // pelin CSS estää tekstin valinnan -> sallitaan
+    const st = el('style', null, '.dj-pois{display:none!important} .dj-ikkuna .chat-content,.dj-ikkuna .chat-content *{user-select:text!important;-webkit-user-select:text!important;cursor:text} .dj-ikkuna .chat-content button{cursor:pointer;user-select:none!important} .dj-ikkuna .chat-content a{cursor:pointer!important;pointer-events:all!important;text-decoration:underline}'); document.head.append(st);   // pelin CSS estää tekstin valinnan -> sallitaan
     const nayta = (e, on) => e.classList.toggle('dj-pois', !on);
     const tauko = (f, ms) => { let t = 0; return () => { clearTimeout(t); t = setTimeout(f, ms); }; };
 
@@ -740,6 +881,7 @@
     const info = el('div', 'text-black nitro-small-size-text'); info.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap';
     const viestiLaatikko = el('div', 'd-flex flex-column chat-history-list'); viestiLaatikko.style.cssText = 'flex:1;overflow-y:auto;overflow-x:hidden;padding:4px 2px;min-height:80px';
     const listaLaatikko = el('div', 'd-flex flex-column gap-1 text-black'); listaLaatikko.style.cssText = 'flex:1;overflow-y:auto;overflow-x:hidden;padding:4px 2px;min-height:80px';
+    const lisaLaatikko = el('div', 'd-flex flex-column gap-1 text-black'); lisaLaatikko.style.cssText = 'flex:1;overflow-y:auto;overflow-x:hidden;padding:4px 2px;min-height:80px';
 
     // --- valmis tiedosto (liitetty/pudotettu): pakkaaja + raja
     const prep = el('div', 'd-flex flex-column gap-1'); prep.style.cssText = 'border-top:1px solid rgba(0,0,0,.2);padding-top:4px'; prep.classList.add('dj-pois');
@@ -790,7 +932,7 @@
       { const k = koodiKentta.value.trim(); if (!k) return; lahetaToiminto(h, a, 0, 0, k, kumoaKentta.value.trim()); koodiKentta.value = kumoaKentta.value = ''; }
       nayta(toimintoRivi, false); };
     const asetukset = el('div', 'd-flex flex-column gap-1 text-black nitro-small-size-text'); asetukset.style.cssText = 'overflow-y:auto;flex:1'; asetukset.classList.add('dj-pois');
-    runko.append(ylarivi, liityRivi, info, listaLaatikko, viestiLaatikko, asetukset, prep, peruRivi, toimintoRivi, kirjoitus);
+    runko.append(ylarivi, liityRivi, info, listaLaatikko, lisaLaatikko, viestiLaatikko, asetukset, prep, peruRivi, toimintoRivi, kirjoitus);
     peruRivi.classList.add('dj-pois');
 
     // --- pienennys: vain otsikkopalkki jää (240 px), lukematta-määrä otsikossa, klikkaus/kaksoisklikkaus/– palauttaa; tila säilyy
@@ -828,14 +970,29 @@
       if (p) { ui.style.backgroundImage = 'url("' + p + '")'; ui.style.backgroundSize = 'contain'; ui.style.backgroundPosition = 'center top'; ui.style.backgroundRepeat = 'no-repeat'; }
       uc.append(ui); const cc = el('div', 'chat-content'); cc.style.cssText = 'max-width:100%;min-width:0;overflow-wrap:anywhere;word-break:break-word'; cc.append(el('b', 'username mr-1', v.from + ': '));
       const rivi2 = el('div', 'd-flex gap-1 align-items-center'); rivi2.style.cssText = 'margin-top:3px;flex-wrap:wrap;row-gap:3px;max-width:100%';   // kp 1.10. "menee usealle riville noi napit": kupla kutistui tekstin levyiseksi ja napit kaartuivat
+      /* kp 1.10. "korjaa ettei linkkei voi painaa siin": URLit tehdaan oikeiksi linkeiksi. Rakennetaan DOM-solmuina
+         (createTextNode + <a>), EI innerHTML:lla, joten toisen kayttajan teksti ei voi injektoida mitaan. rel estaa
+         window.opener-paasyn. Pelin CSS asettaa .chat-content *:lle cursor:text, joten linkille palautetaan osoitin. */
+      const linkita = (sailio, teksti) => {
+        const re = /https?:\/\/[^\s<>"')]+/g; let i = 0, m2;
+        while ((m2 = re.exec(teksti))) {
+          if (m2.index > i) sailio.append(document.createTextNode(teksti.slice(i, m2.index)));
+          const a = el('a', null, m2[0], { href: m2[0], target: '_blank', rel: 'noopener noreferrer', title: m2[0] });
+          a.style.cssText = 'text-decoration:underline;word-break:break-all;cursor:pointer;pointer-events:all';
+          sailio.append(a); i = m2.index + m2[0].length;
+        }
+        if (i < teksti.length) sailio.append(document.createTextNode(teksti.slice(i)));
+      };
       const nappi = (txt, f, cls) => { const m = /^(\P{L}\S*)\s+(.+)$/u.exec(txt), n = el('button', 'btn btn-sm ' + (cls || 'btn-primary'), m ? m[2] : txt, { type: 'button' });   /* sana, ei kuvaketta: pelin fontti piirtaa osan emojeista vaarin (kp 1.10. kuvakaappaus) */ n.style.cssText = 'padding:0 5px;font-size:12px;line-height:18px'; n.onclick = f; rivi2.append(n); return n; };   // kuvake riittää: selitys on title, muuten rivi katkeaa
-      if (v.tyyppi === 'teksti') { const tx = el('span', 'message', nfs(v.teksti)); tx.style.whiteSpace = 'pre-wrap'; tx.style.overflowWrap = 'anywhere'; tx.style.maxWidth = '100%'; if (v.jarj) { tx.style.opacity = '.8'; tx.style.fontStyle = 'italic'; } if (v.historia) { tx.style.opacity = '.85'; const mk = el('span', 'message', v.valitti ? '⏱↪ ' : '⏱ '); mk.title = v.valitti ? 'Vanha viesti, jonka välitti ' + v.valitti + ' (ei suoraan lähettäjältä)' : 'Vanha viesti, haettu liityttäessä'; cc.append(mk); } cc.append(tx);
+      if (v.tyyppi === 'teksti') { const tx = el('span', 'message'); linkita(tx, nfs(v.teksti)); tx.style.whiteSpace = 'pre-wrap'; tx.style.overflowWrap = 'anywhere'; tx.style.maxWidth = '100%'; if (v.jarj) { tx.style.opacity = '.8'; tx.style.fontStyle = 'italic'; } if (v.historia) { tx.style.opacity = '.85'; const mk = el('span', 'message', v.valitti ? '⏱↪ ' : '⏱ '); mk.title = v.valitti ? 'Vanha viesti, jonka välitti ' + v.valitti + ' (ei suoraan lähettäjältä)' : 'Vanha viesti, haettu liityttäessä'; cc.append(mk); } cc.append(tx);
         if (v.jarj) { /* järjestelmäviesti: ei jaettu */ } else {
         const kn = nappi('📋 Kopioi', () => kopioi(v.teksti, kn), 'btn-secondary');
         nappi('🔖 Talteen', () => { const n = prompt('Anna tallennetulle viestille nimi (Datajaon omaan listaan, ei lataa mitään koneelle):', v.teksti.slice(0, 40)); if (n === null) return; tallennaMerkinta({ laji: 'teksti', teksti: v.teksti, from: v.from }, n); piirra(); }, 'btn-secondary').title = 'Tallenna nimellä (löytyy ⚙-asetuksista)'; } }
       else if (v.tyyppi === 'tiedosto') {
         cc.append(el('span', 'message', '📎 ' + v.nimi + ' (' + kb(v.size) + ')'));
-        if (!v.blob && !v.oma) { cc.append(el('span', 'message', ' · ladataan ' + v.saatu + '/' + v.n + (v.tila ? ' · ' + v.tila : ''))); nappi('↻ pyydä uudelleen', () => { const t = tiedostot.get(h + '|' + v.id); if (t) { t.pyynnot = 0; t.viim = 0; } v.tila = ''; piirra(); }, 'btn-secondary').title = 'Pyydä puuttuvia paloja lähettäjältä heti (toimii kun lähettäjä on huoneessa eikä ole ladannut sivua uudelleen)'; }
+        if (!v.blob && (!v.oma || v.palautettu) && !v.pyydetty && !tiedostot.has(h + '|' + v.id)) {   /* 0.12.0 click to receive: tavut lahtevat vasta tasta. 0.13.0: myos oma palautettu tiedosto */
+          nappi('⬇ Hae (' + kb(v.size) + ')', () => { haeTiedosto(h, v.id); piirra(); }).title = 'Pyytää tiedoston lähettäjältä. Mitään ei siirry ennen tätä, ja vain lähettäjä voi lähettää sen.'; }
+        else if (!v.blob && (!v.oma || v.palautettu)) { cc.append(el('span', 'message', ' · ladataan ' + v.saatu + '/' + v.n + (v.tila ? ' · ' + v.tila : ''))); nappi('↻ pyydä uudelleen', () => { const t = tiedostot.get(h + '|' + v.id); if (t) { t.pyynnot = 0; t.viim = 0; } v.tila = ''; piirra(); }, 'btn-secondary').title = 'Pyydä puuttuvia paloja lähettäjältä heti (toimii kun lähettäjä on huoneessa eikä ole ladannut sivua uudelleen)'; }
         else if (!v.blob) cc.append(el('span', 'message', ' · ladataan ' + v.saatu + '/' + v.n));
         else {
           if (/^image\/(png|jpeg|webp|gif)$/.test(v.mime) && v.nayta) { const im = el('img'); im.style.cssText = 'display:block;width:auto;height:auto;max-width:100%;max-height:200px;object-fit:contain;margin-top:3px'; v.url = v.url || URL.createObjectURL(v.blob); im.src = v.url; cc.append(im); }
@@ -880,7 +1037,9 @@
     const chatNakyma = () => ase.nakyma === 'chat' && !!ase.valittu;
     function piirra() {
       const hs = ase.huoneet; if (!ase.valittu && hs.length) ase.valittu = hs[0].id;
+      if (ase.nakyma === 'lisaosat') return piirraLisaosat();
       if (!chatNakyma()) return piirraLista();
+      nayta(lisaLaatikko, false);
       const asAuki = !asetukset.classList.contains('dj-pois');
       nayta(listaLaatikko, false); nayta(viestiLaatikko, !asAuki); for (const e of [info, valinta, takaisin]) nayta(e, true);
       nayta(prep, !!valmis); nayta(peruRivi, !!valmis);
@@ -906,30 +1065,38 @@
       { const paikalla = new Set(yksikot().map(u => u.name));
         for (const [avain2, kt] of kutsut) {
           if (!paikalla.has(kt.from)) continue;
-          if (kt.lukko ? ase.huoneet.some(x => x.tag === kt.tag) : ase.huoneet.some(x => x.id === avain2)) continue;
+          if (kt.yv ? !!yvChat(kt.from) : kt.lukko ? ase.huoneet.some(x => x.tag === kt.tag) : ase.huoneet.some(x => x.id === avain2)) continue;
           const r = el('div', null, null); r.style.cssText = 'flex-basis:100%;display:flex;gap:6px;align-items:center;font-size:12px';
           const j = pikku(el('button', 'btn btn-success btn-sm', 'Liity', { type: 'button' }));
           j.onclick = async () => {
+            if (kt.yv) { const id = await avaaYv(kt.from); if (!id) alert('1:1 chat ei onnistu: ' + kt.from + ' ei ole lahettanyt julkista avaintaan. Paina 🔍 Hae ja yrita uudelleen.'); return piirra(); }
             if (!kt.lukko) { if (liity(kt.c, kt.n)) { const x = ase.huoneet.find(y => y.id === normId(kt.c)); if (x) { x.avoin = true; tallennaAse(); } } return piirra(); }
             const pw = prompt('Chat "' + kt.n + '" vaatii salasanan. Kysy se käyttäjältä ' + kt.from + ':'); if (pw === null) return;
             const id = normId(pw); if (id.length < 6) return alert('Salasana on vähintään 6 merkkiä.');
             const { tag } = await avain(id); if (tag !== kt.tag) return alert('Väärä salasana.');
             if (liity(id, kt.n)) { const x = ase.huoneet.find(y => y.id === id); if (x) { x.tag = tag; tallennaAse(); } } piirra();
           };
-          r.append(el('span', null, '📣 ' + kt.from + ': ' + kt.n + (kt.lukko ? ' 🔒' : '')), j); sailio.append(r);
+          r.append(el('span', null, (kt.yv ? '✉ ' : '📣 ') + kt.from + ': ' + kt.n + (kt.lukko ? ' 🔒' : '')), j); sailio.append(r);
         } }
     }
     const esikatseluTeksti = v => v.tyyppi === 'tiedosto' ? '📎 ' + String(v.nimi || 'tiedosto') : v.tyyppi === 'toiminto' ? '⚡ toimintokortti' : String(v.teksti || '').replace(/\s+/g, ' ').slice(0, 70) || 'viesti';
     const kello = ts => { const d = new Date(ts || Date.now()); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
     function piirraLista() {   /* paanakyma: chatit, viestimaarat, lukemattomat ja ketka ovat paikalla. Ilmoitukset ovat TAALLA, eivat chatin ylla (kp 1.10.) */
       const asAuki = !asetukset.classList.contains('dj-pois');
-      nayta(listaLaatikko, !asAuki);
+      nayta(listaLaatikko, !asAuki); nayta(lisaLaatikko, false);
       for (const e of [viestiLaatikko, info, kirjoitus, prep, peruRivi, toimintoRivi, valinta, takaisin]) nayta(e, false);
       listaLaatikko.replaceChildren();
       const pikku = b => { b.style.cssText = 'padding:0 6px;font-size:11px'; return b; };
       const yla = el('div', null, null); yla.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11px';
       const ln = lasnaLista(YHTEINEN);
-      yla.append(el('span', null, ln.length ? '● Huoneessa nyt: ' + ln.join(', ') : '○ Ei muita Datajako-käyttäjiä tässä huoneessa'));
+      yla.append(el('span', null, ln.length ? '● Huoneessa nyt:' : '○ Ei muita Datajako-käyttäjiä tässä huoneessa'));
+      for (const n of ln) {   /* 1:1 chat suoraan nimesta; sama toiminto kuin pelin hahmovalikon "Lähetä viesti" */
+        const on = yvAvaimet.has(n), b = pikku(el('button', 'btn btn-secondary btn-sm', n + (yvChat(n) ? ' 1:1' : ' ✉'), { type: 'button' }));
+        b.title = on ? (yvChat(n) ? 'Avaa 1:1 chat: ' + n : 'Aloita 1:1 chat kayttajan ' + n + ' kanssa') : n + ' kayttaa vanhempaa Datajakoa: 1:1 vaatii 0.11.0 molemmilta';
+        if (!on) b.disabled = true;
+        b.onclick = async () => { b.disabled = true; const id = await avaaYv(n); if (!id) b.textContent = n + ' ei tue 1:1'; piirra(); };
+        yla.append(b);
+      }
       const hb = pikku(el('button', 'btn btn-secondary btn-sm', '🔍 Hae', { type: 'button', title: 'Kysyy ketkä huoneessa käyttävät Datajakoa ja mitä chatteja on jaettu. Vastaukset tulevat muutamassa sekunnissa.' }));
       hb.onclick = () => { kutsut.clear(); jonoon(YHTEINEN, T.LASNA, { r: 0, c: tagilista() }); vastaaKutsuihin(); hb.textContent = '…'; setTimeout(() => piirra(), 6000); };
       const ub = pikku(el('button', 'btn btn-success btn-sm', '+ Uusi chat', { type: 'button' }));
@@ -941,7 +1108,7 @@
         const rb = el('button', 'btn btn-secondary btn-sm', null, { type: 'button' });
         rb.style.cssText = 'display:flex;flex-direction:column;align-items:stretch;gap:2px;text-align:left;width:100%;padding:5px 7px';
         const r1 = el('div', null, null); r1.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:12px';
-        const nimiOs = el('span', null, (h.nimi === h.id ? h.id : h.nimi) + (h.id !== YHTEINEN && !h.avoin ? ' 🔒' : ''));
+        const nimiOs = el('span', null, (h.nimi === h.id ? h.id : h.nimi) + (h.yv ? ' 👤' : (h.id !== YHTEINEN && !h.avoin ? ' 🔒' : '')));
         nimiOs.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600';
         r1.append(nimiOs);
         if (mukana.length) { const o = el('span', null, '● ' + mukana.length); o.style.cssText = 'font-size:10px;opacity:.75'; o.title = 'paikalla: ' + mukana.join(', '); r1.append(o); }
@@ -955,6 +1122,58 @@
         listaLaatikko.append(rb);
       }
       if (!ase.huoneet.length) listaLaatikko.append(el('div', null, 'Ei chatteja. Paina "+ Uusi chat" tai "Hae".'));
+      { const tarj = lisaosaTarjoukset(), omat = omatLisaosat();   /* valilehti ILMESTYY kun jakaja on samassa huoneessa (kp 1.10.) */
+        if (tarj.length || omat.length) {
+          const b = el('button', 'btn btn-secondary btn-sm', null, { type: 'button' });
+          b.style.cssText = 'display:flex;gap:6px;align-items:center;text-align:left;width:100%;padding:5px 7px;font-size:12px';
+          const t1 = el('span', null, '🧩 Lisäosat'); t1.style.cssText = 'flex:1;font-weight:600';
+          b.append(t1, el('span', null, (tarj.length ? tarj.length + ' tarjolla' : '') + (omat.length ? (tarj.length ? ' · ' : '') + omat.length + ' jaossa' : '')));
+          if (lisaosatAjossa.size) { const a = el('span', null, lisaosatAjossa.size + ' ajossa'); a.style.cssText = 'font-size:10px;font-weight:700;background:#2a7;color:#fff;border-radius:9px;padding:0 6px'; b.append(a); }
+          b.onclick = () => { ase.nakyma = 'lisaosat'; tallennaAse(); piirra(); };
+          listaLaatikko.append(b);
+        } }
+      piirraAsetukset();
+    }
+    function piirraLisaosat() {   /* jakajan tarjoamat lisaosat: koodi tulee vasta Asenna-napista ja ajo vaatii varmistuksen */
+      const asAuki = !asetukset.classList.contains('dj-pois');
+      nayta(lisaLaatikko, !asAuki); nayta(listaLaatikko, false);
+      for (const e of [viestiLaatikko, info, kirjoitus, prep, peruRivi, toimintoRivi, valinta]) nayta(e, false);
+      nayta(takaisin, true);
+      lisaLaatikko.replaceChildren();
+      const pikku = b => { b.style.cssText = 'padding:0 6px;font-size:11px'; return b; };
+      const yla = el('div', null, null); yla.style.cssText = 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:11px';
+      yla.append(el('span', null, 'Lisäosat näkyvät vain jakajilta, jotka ovat nyt tässä huoneessa.'));
+      const hb = pikku(el('button', 'btn btn-secondary btn-sm', '🔍 Hae', { type: 'button', title: 'Kysy huoneelta mitä lisäosia on jaossa' }));
+      hb.onclick = () => { jonoon(YHTEINEN, T.LISAOSAT, { r: 0 }); hb.textContent = '…'; setTimeout(() => piirra(), 5000); };
+      yla.append(hb); lisaLaatikko.append(yla);
+      const tarj = lisaosaTarjoukset();
+      if (!tarj.length) lisaLaatikko.append(el('div', null, 'Ei tarjolla juuri nyt.'));
+      for (const x of tarj) {
+        const rivi = el('div', 'chat-bubble'); rivi.style.cssText = 'display:flex;flex-direction:column;gap:2px;padding:5px 7px;font-size:12px';
+        const r1 = el('div', null, null); r1.style.cssText = 'display:flex;gap:6px;align-items:center';
+        const n1 = el('span', null, x.n); n1.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600';
+        r1.append(n1);
+        const ajossa = lisaosatAjossa.has(x.k);
+        if (ajossa) { const a = el('span', null, 'ajossa'); a.style.cssText = 'font-size:10px;font-weight:700;background:#2a7;color:#fff;border-radius:9px;padding:0 6px'; r1.append(a); }
+        const nappi2 = pikku(el('button', 'btn ' + (ajossa ? 'btn-secondary' : 'btn-success') + ' btn-sm', ajossa ? '⏹ Kumoa' : '⬇ Asenna', { type: 'button' }));
+        nappi2.title = ajossa ? 'Kumoaa lisäosan muutokset tässä selaimessa' : 'Pyytää koodin käyttäjältä ' + x.from + '. Koodi näytetään sinulle ennen ajoa.';
+        nappi2.onclick = () => { if (ajossa) kumoaLisaosa(x.k); else { asennaLisaosa(x.from, x.k); nappi2.textContent = '… pyydetty'; nappi2.disabled = true; } piirra(); };
+        r1.append(nappi2);
+        const r2 = el('div', null, (x.d || '') + '  · ' + x.from + (x.z ? ' · ' + x.z + ' merkkiä' : ' · levyltä'));
+        r2.style.cssText = 'font-size:10px;opacity:.8';
+        rivi.append(r1, r2); lisaLaatikko.append(rivi);
+      }
+      const omat = omatLisaosat();
+      if (omat.length) {
+        const otsake = el('div', null, 'Jaat näitä:'); otsake.style.cssText = 'font-size:11px;font-weight:600;margin-top:4px'; lisaLaatikko.append(otsake);
+        for (const x of omat) {
+          const rivi = el('div', null, null); rivi.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:11px';
+          const n1 = el('span', null, x.n + (x.levy ? ' (levyltä: ' + x.levy + ')' : '')); n1.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+          const pb = pikku(el('button', 'btn btn-danger btn-sm', '🗑 Ota alas', { type: 'button', title: 'Poistaa lisäosan KAIKKIEN listalta ja kumoaa sen heiltä, jotka ajoivat sen' }));
+          pb.onclick = () => { poistaLisaosa(x.k); piirra(); };
+          rivi.append(n1, pb); lisaLaatikko.append(rivi);
+        }
+      }
       piirraAsetukset();
     }
     const piirraTauko = tauko(() => { if (ikkuna.style.display !== 'none' && !pien) piirra(); }, 120);
