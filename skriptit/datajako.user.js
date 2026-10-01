@@ -6,7 +6,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.16.0
+// @version      0.17.0
 // @description  Salattu chat + tiedostojako asun (figure) kautta. Vain samassa hotellihuoneessa. Ei palvelinmuutoksia.
 // @kupla-oletus on
 // @author       re-lab
@@ -53,7 +53,7 @@
     if (len > n - 4 || n - 4 - len > 3) return null;
     return buf.slice(4, 4 + len);
   }
-  const VERSIO = '0.16.0';   /* pida sama kuin @version: kerrotaan kuplaDatajako.versio, jotta nakee kumpi versio kussakin clientissa pyorii */
+  const VERSIO = '0.17.0';   /* pida sama kuin @version: kerrotaan kuplaDatajako.versio, jotta nakee kumpi versio kussakin clientissa pyorii */
   const TE = new TextEncoder(), TD = new TextDecoder();
   // kehys: [tyyppi u8][otsikon pituus u16][otsikko JSON][runko]
   const T = { TEKSTI: 1, PALA: 2, POISTA: 3, TARVITSEN: 4, TOIMINTO: 5, KUITTAUS: 6, LASNA: 7, KUTSU: 8, HISTORIA: 9, TARJOUS: 10, LISAOSAT: 11 };
@@ -409,9 +409,11 @@
   // ei vain vastaajan omia. Toisen kadun kautta tullut viesti merkitaan valittajalla, koska nimen voi silloin vaarentaa.
   const historiaVastattu = new Map(), tarjoukset = new Map(), historiaPyyntoAika = new Map(), historiaSaapuneet = new Map();
   function historiaViestit(h) {
-    const yv = yvHuone(h);   /* huonechatissa vain omat tiedostot, 1:1:ssa myos vastapuolen - han sai ne minulta tai antoi ne minulle, eika kolmatta ole */
+    /* 0.17.0 kp:n pyynnosta: kenella tiedosto ON, se voi tarjota sen eteenpain - myos huonechatissa. Tama kumoaa
+       0.12.0:n "vain lahettaja palvelee" -saannon. Syy jonka han antoi: tiedosto ei tullut historiasta refreshin
+       jalkeen vaikka se oli robon lataama. Provenienssi jaa nakyviin (e.f = alkuperainen, valitti = kuka valitti). */
     return lista(h).filter(v => (v.tyyppi === 'teksti' && v.teksti && !v.jarj) || (v.tyyppi === 'toiminto' && v.t && String(v.t.s || '').length <= 600)
-      || (v.tyyppi === 'tiedosto' && (v.oma ? lahetetyt.has(h + '|' + v.id) : yv && !!v.blob))).slice(-40);
+      || (v.tyyppi === 'tiedosto' && (v.oma ? (lahetetyt.has(h + '|' + v.id) || tarjousLista().some(x => x.id === v.id && x.huone === h)) : !!v.blob))).slice(-40);
   }   // kortit mukaan, mutta vain pienet (asukanava)
   function pyydaHistoria(h) {
     const aika = Date.now();
@@ -440,7 +442,7 @@
     const sulje = () => { if (era.length) erat.push(era); era = []; pit = 0; };
     for (const v of vs) { const kuka = v.oma ? oma : v.from, e = { i: v.id, s: v.ts || Date.now() };
       if (v.tyyppi === 'toiminto') { e.k = { a: String(v.t.a), x: v.t.x | 0, y: v.t.y | 0, s: String(v.t.s || '').slice(0, 600) }; if (v.t.u) e.k.u = String(v.t.u).slice(0, 300); }
-      else if (v.tyyppi === 'tiedosto') e.d = { nimi: String(v.nimi || '').slice(0, 120), mime: String(v.mime || '').slice(0, 80), size: v.size | 0, n: v.n | 0 };
+      else if (v.tyyppi === 'tiedosto') e.d = { nimi: String(v.nimi || '').slice(0, 120), mime: String(v.mime || '').slice(0, 80), size: v.size | 0, n: v.n | 0 };   /* e.f asetetaan alla: alkuperainen lahettaja kulkee mukana, jotta valitetty tiedosto ei nayta valittajan omalta */
       else e.t = String(v.teksti).slice(0, 400);
       if (kuka && kuka !== oma) e.f = String(kuka).slice(0, 40);
       const koko = (e.t ? e.t.length : e.d ? (e.d.nimi.length + 60) : (e.k.s.length + (e.k.u ? e.k.u.length : 0) + 30)) + (e.f ? e.f.length : 0) + 40; if (pit + koko > 900) sulje(); era.push(e); pit += koko; }
@@ -507,7 +509,8 @@
         // mutta se merkitaan valittajalla: nimen voi periaatteessa vaarentaa, joten lahde on nakyva.
         const pohja = { id: String(e.i).slice(0, 16), from: omaViesti ? '(sinä)' : kuka, oma: omaViesti, ts: +e.s || Date.now(), historia: true, valitti: nimi };
         if (e.d && typeof e.d === 'object') {   /* tiedostotarjous historiasta: tavut haetaan vasta Hae-napista, ja vain lahettajalta */
-          if (omaViesti && !yvHuone(huone)) continue;   /* huonechat: oma vanha tiedosto olisi kuollut tarjous, koska vain lahettaja palvelee */
+          /* 0.17.0: oma vanha tiedosto otetaan takaisin MYOS huonechatissa, koska nyt kenella tavut ovat, se palvelee
+             (kp: "laitetaa sittenki takas nii et kenel se on -> voi lahettaa eteenpain"). Aiemmin se olisi ollut kuollut tarjous. */
           lisaa(huone, Object.assign(pohja, { tyyppi: 'tiedosto', nimi: String(e.d.nimi || 'tiedosto').slice(0, 120), mime: String(e.d.mime || '').slice(0, 80), size: Math.max(0, e.d.size | 0), n: Math.max(1, Math.min(4000, e.d.n | 0)), blob: null, saatu: 0, tarjous: true, palautettu: omaViesti })); continue; }
         if (e.k && typeof e.k === 'object') { if (ase.toiminnot === false) continue;   // kortti: sama tarkistus kuin suorassa vastaanotossa, ajaminen vaatii yha ▶ ja varmistuksen
           const a = String(e.k.a); if (!Object.prototype.hasOwnProperty.call(TOIMINNOT, a) || typeof e.k.s !== 'string') continue;
@@ -560,8 +563,7 @@
           for (const i of pyyd) if (i >= 0 && i < pal.tied.n) jonoon(huone, T.PALA, Object.assign({ i }, pal.tied), pal.data.subarray(i * CHUNK, (i + 1) * CHUNK)); });
         return;
       }
-      if (!yvHuone(huone)) return;   /* HUONECHAT: en palvele tiedostoa jota en itse lahettanyt (kp: "ettei ne jää tahattomasti pyörii") */
-      const vv = lista(huone).find(x => x.id === o.id); if (!vv || !vv.blob) return;   /* 1:1: palautan vastapuolelle sen mita han menetti */
+      const vv = lista(huone).find(x => x.id === o.id); if (!vv || !vv.blob) return;   /* 0.17.0: palvelen myos tiedostoa jonka vain SAIN, jos tavut ovat minulla (kp: "kenel se on -> voi lahettaa eteenpain") */
       const pyyd = o.puuttuu.slice(0, 40).map(x => x | 0);
       vv.blob.arrayBuffer().then(ab => { const data = new Uint8Array(ab), n = Math.max(1, Math.ceil(data.length / CHUNK));
         const tied = { id: vv.id, nimi: vv.nimi, mime: vv.mime, size: data.length, n };
@@ -1002,6 +1004,9 @@
       const uc = el('div', 'user-container'), ui = el('div', 'user-image'); const p = paaKuva(figureNimelle(v.from));
       if (p) { ui.style.backgroundImage = 'url("' + p + '")'; ui.style.backgroundSize = 'contain'; ui.style.backgroundPosition = 'center top'; ui.style.backgroundRepeat = 'no-repeat'; }
       uc.append(ui); const cc = el('div', 'chat-content'); cc.style.cssText = 'max-width:100%;min-width:0;overflow-wrap:anywhere;word-break:break-word'; cc.append(el('b', 'username mr-1', v.from + ': '));
+      { const d = new Date(v.ts || Date.now());   /* kp 1.10. "saisko timestampit viesteihin". Paiva vain hiiren alle, jotta rivi ei kasva. */
+        const a = el('span', null, String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'));
+        a.style.cssText = 'font-size:10px;opacity:.55;margin-right:4px'; a.title = d.toLocaleString('fi-FI'); cc.append(a); }
       const rivi2 = el('div', 'd-flex gap-1 align-items-center'); rivi2.style.cssText = 'margin-top:3px;flex-wrap:wrap;row-gap:3px;max-width:100%';   // kp 1.10. "menee usealle riville noi napit": kupla kutistui tekstin levyiseksi ja napit kaartuivat
       /* kp 1.10. "korjaa ettei linkkei voi painaa siin": URLit tehdaan oikeiksi linkeiksi. Rakennetaan DOM-solmuina
          (createTextNode + <a>), EI innerHTML:lla, joten toisen kayttajan teksti ei voi injektoida mitaan. rel estaa
@@ -1156,12 +1161,12 @@
         listaLaatikko.append(rb);
       }
       if (!ase.huoneet.length) listaLaatikko.append(el('div', null, 'Ei chatteja. Paina "+ Uusi chat" tai "Hae".'));
-      { const tarj = lisaosaTarjoukset(), omat = omatLisaosat();   /* valilehti ILMESTYY kun jakaja on samassa huoneessa (kp 1.10.) */
-        if (tarj.length || omat.length) {
+      { const tarj = lisaosaTarjoukset(), omat = omatLisaosat();   /* 0.17.0: rivi on AINA nakyvissa. kp 1.10. "mis mun extensionit o" - rivi joka ilmestyy ja katoaa ei ole loydettavissa. */
+        {
           const b = el('button', 'btn btn-secondary btn-sm', null, { type: 'button' });
           b.style.cssText = 'display:flex;gap:6px;align-items:center;text-align:left;width:100%;padding:5px 7px;font-size:12px';
           const t1 = el('span', null, '🧩 Lisäosat'); t1.style.cssText = 'flex:1;font-weight:600';
-          b.append(t1, el('span', null, (tarj.length ? tarj.length + ' tarjolla' : '') + (omat.length ? (tarj.length ? ' · ' : '') + omat.length + ' jaossa' : '')));
+          b.append(t1, el('span', null, (tarj.length ? tarj.length + ' tarjolla' : 'ei tarjolla') + (omat.length ? ' · ' + omat.length + ' jaossa' : '')));
           if (lisaosatAjossa.size) { const a = el('span', null, lisaosatAjossa.size + ' ajossa'); a.style.cssText = 'font-size:10px;font-weight:700;background:#2a7;color:#fff;border-radius:9px;padding:0 6px'; b.append(a); }
           b.onclick = () => { ase.nakyma = 'lisaosat'; tallennaAse(); piirra(); };
           listaLaatikko.append(b);
