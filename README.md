@@ -23,3 +23,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/etusivu-G-0930.png` — etusivu-mockup G = C + F:n footer-napit (Res 02:17)
 - `kuvat/armas-penkki-v4.png` — Armas-penkin värivaihtoehdot (Shorpin pyyntö)
 - `kuvat/armas-penkki-v3.png` — Armas-penkki, päällinen värjätty
+- `kuvat/armas-penkki-lakritsi-valkoinen.png` — Armas-penkki lakritsi+valkoinen (Shorpin pyyntö)
