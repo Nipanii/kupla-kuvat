@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      1.0.0
+// @version      1.1.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/pitka-viesti.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/pitka-viesti.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -23,9 +23,25 @@
   const MAX = 100, VALI = 700;   // ms osien välillä: kuplan floodiesto (mitattu 2.10.: ks. testi)
   const SEL = 'input.nitro-chat-input-control';
   const asetaArvo = (el, v) => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); };
-  const pilko = t => { const osat = []; let s = t.trim();
-    while (s.length > MAX) { let i = s.lastIndexOf(' ', MAX); if (i < MAX * .5) i = MAX; osat.push(s.slice(0, i).trim()); s = s.slice(i).trim(); }
-    if (s) osat.push(s); return osat; };
+  // SAMA kuin nitro/pilko-viesti.js (kp 2.10. 00:45): lauseen loppu > pilkku > välilyönti, tasakokoiset osat. Muuta molempia.
+  function pilko(t, max = MAX) {
+    let s = String(t).trim().replace(/\s+/g, ' '); if (s.length <= max) return [s];
+    const osat = [];
+    while (s.length > max) {
+      const n = Math.ceil(s.length / max), tavoite = Math.ceil(s.length / n);
+      let paras = -1, pist = -Infinity;
+      for (let i = Math.floor(max * .35); i <= max && i < s.length; i++) {
+        if (s[i] !== ' ') continue;
+        const ed = s[i - 1], laatu = /[.!?…]/.test(ed) ? 3 : /[,;:)]/.test(ed) ? 2 : /[-]/.test(s[i + 1] || '') ? 1.5 : 1;
+        const p = laatu * 40 - Math.abs(i - tavoite) * .6;   // lauseen loppu voittaa ~65 merkin tasapainoeron, pilkku ~33
+        if (p > pist) { pist = p; paras = i; }
+      }
+      if (paras < 0) paras = max;   // ei välilyöntiä (pitkä linkki tms.): kova katkaisu
+      osat.push(s.slice(0, paras).trim()); s = s.slice(paras).trim();
+    }
+    if (s) osat.push(s);
+    return osat;
+  }
   const vapauta = () => { if (VW.__kuplaPitkaPois) return; const el = document.querySelector(SEL); if (el && el.maxLength !== -1 && el.maxLength < 2000) el.maxLength = 2000; };
   new MutationObserver(vapauta).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['maxlength'] }); vapauta();
   let jono = [], kaynnissa = false;
