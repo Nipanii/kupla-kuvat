@@ -25,3 +25,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/armas-penkki-v3.png` — Armas-penkki, päällinen värjätty
 - `kuvat/armas-penkki-lakritsi-valkoinen.png` — Armas-penkki lakritsi+valkoinen (Shorpin pyyntö)
 - `kuvat/armas-penkki-mustavalko-v7.png` — Armas-penkki musta-valkoinen lakritsiraidat (Shorpin pyyntö)
+- `kuvat/armas-penkki-v2b.png` — Armas-penkki valkoiset laudat, musta jalusta
