@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.19.4
+// @version      0.19.5
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/datajako.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/datajako.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -54,7 +54,7 @@
     if (len > n - 4 || n - 4 - len > 3) return null;
     return buf.slice(4, 4 + len);
   }
-  const VERSIO = '0.19.4';   /* pida sama kuin @version: kerrotaan kuplaDatajako.versio, jotta nakee kumpi versio kussakin clientissa pyorii */
+  const VERSIO = '0.19.5';   /* pida sama kuin @version: kerrotaan kuplaDatajako.versio, jotta nakee kumpi versio kussakin clientissa pyorii */
   const TE = new TextEncoder(), TD = new TextDecoder();
   // kehys: [tyyppi u8][otsikon pituus u16][otsikko JSON][runko]
   const T = { TEKSTI: 1, PALA: 2, POISTA: 3, TARVITSEN: 4, TOIMINTO: 5, KUITTAUS: 6, LASNA: 7, KUTSU: 8, HISTORIA: 9, TARJOUS: 10, LISAOSAT: 11 };
@@ -1311,6 +1311,15 @@
           nappi2.onclick = () => { if (ajossa) kumoaLisaosa(x.k); else if (koodi) ajaLisaosa(x.k, koodi.n, koodi.s, koodi.u, koodi.from); else { asennaLisaosa(x.from, x.k); nappi2.textContent = '… pyydetty'; nappi2.disabled = true; } piirra(); };
         }
         r1.append(nappi2);
+        /* 0.19.5 kp 2.10. 00:39 "unohtunu sellanen et voi tallentaa noi userscriptit ... ei voi kopioida eikä tallentaa tiedostona":
+           kun koodi on asennettu (eli muistissa ja hyväksytty), sen voi kopioida tai tallentaa .user.js-tiedostona Tampermonkeyhin. */
+        if (koodi) {
+          const kop = pikku(el('button', 'btn btn-secondary btn-sm', '📋', { type: 'button', title: 'Kopioi koodi leikepöydälle' }));
+          kop.onclick = () => { try { navigator.clipboard.writeText(koodi.s); kop.textContent = '✓'; setTimeout(() => { kop.textContent = '📋'; }, 2000); } catch (e) { kop.textContent = '✗'; } };
+          const tal = pikku(el('button', 'btn btn-secondary btn-sm', '💾', { type: 'button', title: 'Tallenna tiedostona (' + x.k + '.user.js): avaa Tampermonkeyllä niin se pysyy latauksen yli' }));
+          tal.onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([koodi.s], { type: 'text/javascript' })); a.download = x.k + '.user.js'; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000); };
+          r1.append(kop, tal);
+        }
         const r2 = el('div', null, (x.d || '') + '  · ' + x.from + (x.poissa ? ' (ei huoneessa)' : '') + (x.z ? ' · ' + x.z + ' merkkiä' : ' · levyltä'));
         r2.style.cssText = 'font-size:10px;opacity:.8';
         rivi.append(r1, r2); lisaDyn.append(rivi);
