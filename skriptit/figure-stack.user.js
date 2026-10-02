@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         Kupla vaatepino (figure stack)
 // @namespace    https://re-lab.local/kupla
-// @version      0.5.0
+// @version      0.6.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/figure-stack.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/figure-stack.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
 // @match        https://kupla.cc/*
 // @grant        none
 // @run-at       document-idle
-// @description  Useampi vaate samasta kategoriasta päällekkäin (esim. kaksi hattua tai kaksi takkia). Vaatekaapissa: tavallinen klikkaus toimii kuten ennenkin; ruudun kulman vihreä + lisää vaatteen päälle (pinoon), pinotuissa on punainen - joka poistaa sen pinosta ja järjestysnumero (1 = alin). Pinossa olevan vaatteen klikkaus valitsee sen väritettäväksi, jolloin paletti värittää juuri sen. Renderöi myös muiden pelaajien pinotut asut. Värivalinta koskee päällimmäistä.
+// @description  Useampi vaate samasta kategoriasta päällekkäin (esim. kaksi hattua tai kaksi takkia). Vaatekaapissa: tavallinen klikkaus toimii kuten ennenkin; ruudun kulman vihreä + lisää vaatteen päälle (pinoon), pinotuissa on punainen - joka poistaa sen pinosta ja järjestysnumero (1 = alin) sekä ↑/↓ järjestykselle. Tavallinen klikkaus vaihtaa vain päällimmäisen, pino säilyy. Pinossa olevan vaatteen klikkaus valitsee sen väritettäväksi, jolloin paletti värittää juuri sen. Renderöi myös muiden pelaajien pinotut asut. Värivalinta koskee päällimmäistä.
 // @author       re-lab
 // ==/UserScript==
 /*
@@ -45,6 +45,8 @@
  *   vaihdon jälkeen näyttää merkit väärissä ruuduissa ja +:n klikkaus ajaa toisen vaatteen (jopa toisen kategorian) valinnan.
  * 0.5.0 (Res 00:15 "numeron viereen jonkun napin jolla vaihtaa järjestystä"): pinotun ruudun ↑ (numeron oikealla puolella)
  *   siirtää vaatteen yhden askeleen ylemmäs; päällimmäisestä kiertää alimmaiseksi. Värit ja värikohde kulkevat vaatteen mukana.
+ * 0.6.0 (kp 2026-10-02 03:07-03:14): ↓-nappi (alimmainen kiertää päällimmäiseksi); tavallinen klikkaus ei enää tyhjennä pinoa
+ *   (huti +:n vierestä hävitti valinnat), tyhjä-ruutu tyhjentää edelleen. Robolla testattu: +, klikkaus, ↓, värikohde 3/3.
  * RAJA: kupla.cc/avatarimage (palvelimen kuvapalvelu) piirtää edelleen vain viimeisen duplikaatin.
  * RAJA: renderöijä patchataan vasta kun huoneessa on ensimmäinen avatar; sitä ennen luodut kuvat (esim. työkalupalkin
  *   pää) näyttävät vanhan tavan, kunnes ne luodaan uudelleen. Huoneen avatarit päivitetään patchatessa.
@@ -52,7 +54,7 @@
 (() => {
   'use strict';
   const W = window;
-  const VERSION = '0.5.0';
+  const VERSION = '0.6.0';
   if (W.__figureStack && W.__figureStack.version === VERSION && !W.__figureStackTestOnly) return;
   const TAG = '[vaatepino]';
   const SEP = '~';
@@ -219,9 +221,11 @@
         const a = stackArr(this, setType);
         const i = a.findIndex(e => e.id === partId); if (i >= 0) a.splice(i, 1);
         if (old !== undefined && old >= 0 && old !== partId) a.push({ id: old, colors: (this._colors.get(setType) || []).slice() });
-      } else if (p !== 'keep') {
-        stacks(this).delete(setType); // tavallinen klikkaus = yksi vaate, kuten ennenkin
+      } else if (p !== 'keep' && !(partId >= 0)) {
+        stacks(this).delete(setType); // tyhjä-ruutu = koko kategoria pois, myös pino
       }
+      // 0.6.0 (kp 2026-10-02 03:11 "huti plussasta ... poistaa jo kaikki valitut"): tavallinen klikkaus vaihtaa vain
+      // päällimmäisen ja pino pysyy. Ennen se tyhjensi pinon, joten +:n vierestä osunut klikkaus hävitti valinnat.
       return origSave.apply(this, arguments);
     };
     FDP.savePartSetColourId = function (setType, colorIds, update = true) {
@@ -354,6 +358,24 @@
     fd.updateView();
   }
 
+  // 0.6.0 (kp 2026-10-02 03:09 "nuoli et voi nostaa ylöspäin ... ei alaspäin"): ↓ siirtää askeleen alemmas;
+  // alimmaisesta kiertää päällimmäiseksi. Sama kirjanpito kuin moveUp.
+  function moveDown(el) {
+    const fd = findEditorFigureData(); const t = tileInfo(el); if (!fd || !t) return;
+    const a = stackArr(fd, t.type); if (!a.length) return;
+    const prim = { id: fd._data.get(t.type), colors: (fd._colors.get(t.type) || []).slice() };
+    const list = a.concat([prim]);
+    const p = list.findIndex(e => e.id === t.partItem.id); if (p < 0) return;
+    const te = targetEntry(fd, t.type); const targetId = te ? te.id : prim.id;
+    if (p === 0) list.push(list.shift());
+    else { const x = list[p]; list[p] = list[p - 1]; list[p - 1] = x; }
+    const top = list.pop();
+    a.length = 0; for (const e of list) a.push(e);
+    fd._data.set(t.type, top.id); fd._colors.set(t.type, top.colors);
+    setTarget(fd, t, targetId === top.id ? null : targetId);
+    fd.updateView();
+  }
+
   function badge(el, cls, text, title, onUse) {
     let b = el.querySelector(':scope > .' + cls);
     if (!b) {
@@ -384,7 +406,7 @@
     const fd = editorDone && findEditorFigureData();
     for (const el of document.querySelectorAll('.nitro-avatar-editor .layout-grid-item')) {
       const t = (!fdOn && fd) ? tileInfo(el) : null;
-      if (!t || NO_STACK.has(t.type) || t.partItem.isClear || !t.partItem.partSet) { dropBadge(el, 'vp-plus'); dropBadge(el, 'vp-minus'); dropBadge(el, 'vp-nro'); dropBadge(el, 'vp-ylos'); continue; }
+      if (!t || NO_STACK.has(t.type) || t.partItem.isClear || !t.partItem.partSet) { dropBadge(el, 'vp-plus'); dropBadge(el, 'vp-minus'); dropBadge(el, 'vp-nro'); dropBadge(el, 'vp-ylos'); dropBadge(el, 'vp-alas'); continue; }
       const a = stacks(fd).get(t.type) || [];
       const id = t.partItem.id; const primary = fd._data.get(t.type);
       const i = a.findIndex(e => e.id === id);
@@ -393,6 +415,8 @@
       else dropBadge(el, 'vp-nro');
       if (nro) badge(el, 'vp-ylos', '↑', 'Siirrä ylemmäs (päällimmäinen kiertää alimmaiseksi)', moveUp);
       else dropBadge(el, 'vp-ylos');
+      if (nro) badge(el, 'vp-alas', '↓', 'Siirrä alemmas (alimmainen kiertää päällimmäiseksi)', moveDown);
+      else dropBadge(el, 'vp-alas');
       if (nro) badge(el, 'vp-minus', '−', 'Poista pinosta', removeFromStack);
       else dropBadge(el, 'vp-minus');
       if (!nro && id !== primary) badge(el, 'vp-plus', '+', 'Lisää tämä päälle (pinoon)', addToStack);
@@ -410,6 +434,7 @@
       '.vp-plus{right:1px;background:#3c8d4a;color:#fff;opacity:.85}.vp-plus:hover{opacity:1;background:#4fb35f}' +
       '.vp-minus{right:1px;background:#c9463d;color:#fff;opacity:.85}.vp-minus:hover{opacity:1;background:#e0554b}' +
       '.vp-ylos{left:15px;background:#222c;color:#fff}.vp-ylos:hover{background:#3a6ea5}' +
+      '.vp-alas{left:29px;background:#222c;color:#fff}.vp-alas:hover{background:#3a6ea5}' +
       '.vp-nro{position:absolute;left:1px;top:1px;z-index:5;min-width:13px;height:13px;padding:0 2px;box-sizing:border-box;border-radius:7px;background:#222c;color:#fff;font:bold 10px/13px sans-serif;text-align:center;pointer-events:none;user-select:none}';
     document.head.appendChild(st);
     document.addEventListener('click', onTileClick, true);
