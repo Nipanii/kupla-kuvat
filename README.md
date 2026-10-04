@@ -27,3 +27,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/armas-penkki-mustavalko-v7.png` — Armas-penkki musta-valkoinen lakritsiraidat (Shorpin pyyntö)
 - `kuvat/armas-penkki-v2b.png` — Armas-penkki valkoiset laudat, musta jalusta
 - `kuvat/armas-penkki-4.png` — Armas-penkki lakritsi: 4 vaihtoehtoa (Shorp)
+- `kuvat/varjokauppias-kollaasi.jpg` — varjokauppias-inspis (Gemini)
