@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.3.21
+// @version      0.3.22
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/kuvakupla-korjaus.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/kuvakupla-korjaus.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -58,11 +58,8 @@
   'use strict';
   const VW = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
   if (VW.__kuvakuplaPois) { try { VW.__kuvakuplaPois(); } catch (e) {} }   // vanha versio pois ennen uutta
-  // 0.3.21 (kp 05:10 "laitetaan pr jo nyt, res voi testata sen ennen mergeä"): kun sama korjaus on clientissa (PR 0-es/kupla-cc#142),
-  //   client asettaa window.__kuplaChatFix -> tämä ei asennu. Muuten molemmat korjaisivat: kasvava kuva nousisi kahdesti, historia
-  //   aseteltaisiin kahdesti. Kenenkään ei tarvitse muistaa poistaa skriptiä deployn jälkeen.
-  if (VW.__kuplaChatFix) { VW.__kuvakuplaPois = null; VW.__kuplaKuvakupla = false;
-    VW.__kuvakuplaTila = { versio: '0.3.21', ohitettu: 'client sisältää korjauksen (__kuplaChatFix ' + VW.__kuplaChatFix + ')' }; return; }
+  // 0.3.22 (kp 5.10. 08:48 "Ei kuulu clientin koodiin ... ei turhaa koodia"): 0.3.21:n __kuplaChatFix-tarkistus poistettu, eikä PR
+  //   0-es/kupla-cc#142 aseta sitä. Kun korjaus on deployattu, skripti poistetaan käsin (Res).
   VW.__kuplaKuvakupla = true;
   const fiberProp = (el, key) => {
     const k = Object.keys(el).find(x => x.startsWith('__reactFiber$')); let f = k && el[k];
@@ -74,7 +71,7 @@
   const seurattu = new WeakSet();
   const chatOf = el => { const c = fiberProp(el, 'chat'); return c && typeof c.id === 'number' ? c : null; };
   const kuplat = () => [...document.querySelectorAll('.nitro-chat-widget > .bubble-container')];
-  const tila = VW.__kuvakuplaTila = { versio: '0.3.21', korjauksia: 0, keskitetty: 0, ro: 0, seurattu: 0, erotettu: 0, viimeisin: null, historia: 0 };
+  const tila = VW.__kuvakuplaTila = { versio: '0.3.22', korjauksia: 0, keskitetty: 0, ro: 0, seurattu: 0, erotettu: 0, viimeisin: null, historia: 0 };
   // 0.2.2: kasvu siirtää kuvakuplan JA vanhemmat saman verran, joten vanhempi joka oli jo SAMALLA korkeudella (peli ei erottanut
   // niitä, kuva oli mountissa ~0 px) jäi päällekkäin pysyvästi. Mitattu kp:n clientissa 4.10. 21:06: "prööt" ja gif molemmat top 352,
   // "pioas" ja gif molemmat 369. Siksi kasvun jälkeen jokainen vanhempi kupla, joka on uudemman päällä, nostetaan sen yläpuolelle
