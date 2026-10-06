@@ -29,3 +29,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/armas-penkki-4.png` — Armas-penkki lakritsi: 4 vaihtoehtoa (Shorp)
 - `kuvat/varjokauppias-kollaasi.jpg` — varjokauppias-inspis (Gemini)
 - `kuvat/kuuma-laskuri-0510.png` — robon kuuma-laskuri ja nippu
+- `kuvat/sly-grillattu.jpg` — Harjis: Murray ja Le Paradox syövät grillattua Slyta
