@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.19.5
+// @version      0.20.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/datajako.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/datajako.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -54,7 +54,7 @@
     if (len > n - 4 || n - 4 - len > 3) return null;
     return buf.slice(4, 4 + len);
   }
-  const VERSIO = '0.19.5';   /* pida sama kuin @version: kerrotaan kuplaDatajako.versio, jotta nakee kumpi versio kussakin clientissa pyorii */
+  const VERSIO = '0.20.0';   /* pida sama kuin @version: kerrotaan kuplaDatajako.versio, jotta nakee kumpi versio kussakin clientissa pyorii */
   const TE = new TextEncoder(), TD = new TextDecoder();
   // kehys: [tyyppi u8][otsikon pituus u16][otsikko JSON][runko]
   const T = { TEKSTI: 1, PALA: 2, POISTA: 3, TARVITSEN: 4, TOIMINTO: 5, KUITTAUS: 6, LASNA: 7, KUTSU: 8, HISTORIA: 9, TARJOUS: 10, LISAOSAT: 11 };
@@ -107,7 +107,7 @@
     if (!o || typeof o !== 'object' || o.laji !== 'datajako-asetukset' || o.versio !== 1) return null;
     const ut = { laatu: null, maxSivu: null, tallennetut: [], huoneet: [], auto: [], hylatty: 0 };
     if (+o.laatu > 0) ut.laatu = Math.min(0.95, Math.max(0.2, +o.laatu));
-    if ([256, 512, 800, 1024, 1600, 2048].includes(+o.maxSivu)) ut.maxSivu = +o.maxSivu;
+    if (o.maxSivu != null && o.maxSivu !== '' && [0, 256, 512, 800, 1024, 1600, 2048].includes(+o.maxSivu)) ut.maxSivu = +o.maxSivu;   /* 0 = alkuperäinen (0.20.0) */
     for (const m of Array.isArray(o.tallennetut) ? o.tallennetut.slice(0, 500) : []) { const s = siivoaMerkinta(m); if (s) ut.tallennetut.push(s); else ut.hylatty++; }
     for (const h of Array.isArray(o.huoneet) ? o.huoneet.slice(0, 50) : []) { const id = huoneKoodiOk(typeof h === 'string' ? h : h && h.id); if (id) ut.huoneet.push({ id, nimi: str(h && h.nimi, 60) || id }); else ut.hylatty++; }
     for (const a of Array.isArray(o.auto) ? o.auto.slice(0, 50) : []) if (typeof a === 'string' && a.trim() && a.length <= 40) ut.auto.push(a.trim());
@@ -137,7 +137,7 @@
   const LS = 'kupla.datajako.v1';
   const dv = (o, k) => { const d = o && Object.getOwnPropertyDescriptor(o, k); return d && !d.get ? d.value : undefined; };
   const ase = (() => { let s = {}; try { s = JSON.parse(localStorage.getItem(LS) || '{}'); } catch (e) {} return Object.assign({ huoneet: [], valittu: null, auto: {}, laatu: 0.7, maxSivu: 1024 }, s); })();
-  ase.maxSivu = [256, 512, 800, 1024, 1600, 2048].includes(+ase.maxSivu) ? +ase.maxSivu : 1024;
+  ase.maxSivu = ase.maxSivu != null && ase.maxSivu !== '' && [0, 256, 512, 800, 1024, 1600, 2048].includes(+ase.maxSivu) ? +ase.maxSivu : 1024;   /* 0 = alkuperäinen */
   ase.laatu = Math.min(0.95, Math.max(0.2, +ase.laatu || 0.7));
   if (!Array.isArray(ase.huoneet)) ase.huoneet = [];
   // 0.4.0: oletuksena yksi yhteinen chat ilman salasanaa (kiinteä koodi, salaus vain peitettä). Oma salasana on VALINNAINEN: valikosta voi luoda yksityisen chatin.
@@ -868,12 +868,18 @@
   rekisteroiKomento('unohda', 'poista tallennettu: /unohda <nimi>', (a, c) => { const n = komentoNimi(a), i = ase.tallennetut.findIndex(m => komentoNimi(m.nimi) === n); if (i < 0) return c.tulosta('Ei tallennettua nimeltä /' + n); ase.tallennetut.splice(i, 1); tallennaAse(); paivita(); c.tulosta('Poistettu: /' + n); });
 
   // ---------- kuvanpakkaus ----------
+  // 0.20.0 (kp 6.10. 06:02 "datajakoon tarvitaan original res valinta uploadeihin", 06:47 "lisätään alkuperäinen resoluutio valinta"):
+  //   maxSivu 0 = alkuperäinen resoluutio, ei pienennystä (laatu-liukusäädin pätee yhä, WebP). Puuttuva arvo on yhä 1024.
+  //   Alkuperäinenkin pienennetään WebP:n ylärajaan 16383 px/sivu (mitattu robolla: 17000x100 -> 16383x96, 3000x2000 säilyy).
+  //   Jos toBlob silti palauttaa null (muistiraja), virhe -> kutsuja lähettää alkuperäisen tiedoston (kokovaroitus RAJA pätee).
   async function pakkaaKuva(file, laatu, maxSivu) {
+    const alkup = maxSivu != null && maxSivu !== '' && +maxSivu === 0;
     maxSivu = +maxSivu > 0 ? +maxSivu : 1024; laatu = +laatu > 0 ? +laatu : 0.7;
-    const bmp = await createImageBitmap(file), s = Math.min(1, maxSivu / Math.max(bmp.width, bmp.height));
+    // alkuperäinen = ei pienennystä, paitsi WebP:n oma yläraja 16383 px/sivu (yli sen Chrome ei pakkaa oikein kokoista kuvaa)
+    const bmp = await createImageBitmap(file), s = Math.min(1, (alkup ? 16383 : maxSivu) / Math.max(bmp.width, bmp.height));
     const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(bmp.width * s)); c.height = Math.max(1, Math.round(bmp.height * s));
     c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
-    return new Promise(r => c.toBlob(r, 'image/webp', laatu));
+    return new Promise((r, e) => c.toBlob(b => b ? r(b) : e(new Error('WebP-pakkaus palautti tyhjän (koko ' + c.width + 'x' + c.height + ')')), 'image/webp', laatu));
   }
 
   // 1:1 chatin sisaankaynti PELIN omassa hahmovalikossa (kp 1.10. "lisätään right click valikkoon lähetä viesti,
@@ -1027,6 +1033,7 @@
     const laatuIn = el('input', null, null, { type: 'range', min: '0.2', max: '0.95', step: '0.05' }); laatuIn.style.flex = '1';
     const laatuT = el('span'); const maxSel = el('select', 'form-select form-select-sm'); maxSel.style.width = '124px';
     for (const s of [256, 512, 800, 1024, 1600, 2048]) maxSel.append(el('option', null, s + ' px', { value: String(s) }));
+    maxSel.append(el('option', null, 'alkuperäinen', { value: '0' }));   /* 0.20.0 kp 6.10. 06:02 "original res valinta uploadeihin" + 06:47 "lisätään" */
     kuvaSaato.append(el('span', null, 'laatu'), laatuIn, laatuT, maxSel);
     const yhteenveto = el('div', 'text-black fw-bold nitro-small-size-text');
     const varoitus = el('label', 'text-danger nitro-small-size-text'); varoitus.style.cssText = 'display:none;gap:4px;align-items:flex-start';
