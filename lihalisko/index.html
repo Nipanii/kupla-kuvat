@@ -49,7 +49,7 @@ button.on{background:var(--on)}button.iso{font-size:16px;padding:10px 16px;backg
 <section class="kortti" style="margin-top:16px">
  <h2>Editorissa</h2>
  <ol><li>Aseta tilaan yhtä monta ruutua kuin valitsit (Rakenne / Animaatio).</li>
- <li>Kuvat-välilehti → <i>Pudota monta PNG-kuvaa kerralla</i> → kaikki zipin kuvat. Nimet <code>0_2_a_0.png</code>… kohdistuvat itse.</li>
+ <li>Kuvat-välilehti → <i>Pudota monta PNG-kuvaa kerralla</i> → kaikki zipin kuvat. Nimet <code>0_2_a_0.png</code>… ja <code>icon.png</code> (katalogin kuvake) kohdistuvat itse.</li>
  <li>Animaatio-välilehti → sama nopeus kuin tässä.</li></ol>
 </section>
 </main>
@@ -111,6 +111,7 @@ $('lataa').onclick=async()=>{const r=ruudut(),[w,h]=koko(),zip=new JSZip(),c=doc
  $('tila').textContent='tehdään…';
  for(let k=0;k<r.length;k++){const im=kuvat[r[k]];if(!im.complete)await new Promise(ok=>im.onload=ok);piirra(g,im,w,h);
   const b=await new Promise(ok=>c.toBlob(ok,'image/png'));zip.file(`0_2_a_${k}.png`,b)}
+ {const ic=document.createElement('canvas'),sk=Math.min(64/w,64/h,1);ic.width=Math.max(1,Math.round(w*sk));ic.height=Math.max(1,Math.round(h*sk));const ig=ic.getContext('2d');ig.drawImage(c,0,0,ic.width,ic.height);zip.file('icon.png',await new Promise(ok=>ic.toBlob(ok,'image/png')))}
  zip.file('LUE.txt',`${r.length} ruutua (alkuperäiset ${r.join(',')}), ${w}x${h} px, nopeus ${fps} kuvaa/s (editorissa Animaatio: ${fps} kuvaa/s).\nRajaus x${raja.x} y${raja.y} ${raja.w}x${raja.h}.\n`);
  const blob=await zip.generateAsync({type:'blob'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='workshop-ruudut.zip';a.click();
  $('tila').textContent=`✅ ${r.length} kuvaa, ${w}×${h} px. Nopeus editoriin: ${fps} kuvaa/s.`};
