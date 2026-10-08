@@ -32,6 +32,7 @@ button.on{background:var(--on)}button.iso{font-size:16px;padding:10px 16px;backg
  <section class="kortti">
   <h2>2. Esikatselu</h2>
   <canvas id="c" width="255" height="355"></canvas>
+  <p style="margin:6px 0">Lipaisut (kieli näkyy ruuduissa 1–6 ja 30–37): <button data-p="0,9,1">Lipaisu 1 (0–8)</button><button data-p="28,12,1">Lipaisu 2 (28–39)</button><button data-p="0,14,3">Molemmat (0–39, joka 3.)</button></p>
   <label>Ensimmäinen ruutu: <b id="alkuN"></b></label><input type="range" id="alku" min="0" value="0">
   <label>Ruutuja: <b id="maaraN"></b></label><input type="range" id="maara" min="1" max="16" value="16">
   <label>Joka n:s ruutu: <b id="askelN"></b></label><input type="range" id="askel" min="1" max="6" value="1">
@@ -103,5 +104,6 @@ $('lataa').onclick=async()=>{const r=ruudut(),[w,h]=koko(),zip=new JSZip(),c=doc
  zip.file('LUE.txt',`${r.length} ruutua (alkuperäiset ${r.join(',')}), ${w}x${h} px, nopeus ${fps} kuvaa/s (editorissa Animaatio: ${fps} kuvaa/s).\nRajaus x${raja.x} y${raja.y} ${raja.w}x${raja.h}.\n`);
  const blob=await zip.generateAsync({type:'blob'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='workshop-ruudut.zip';a.click();
  $('tila').textContent=`✅ ${r.length} kuvaa, ${w}×${h} px. Nopeus editoriin: ${fps} kuvaa/s.`};
+document.querySelectorAll('[data-p]').forEach(btn=>btn.onclick=()=>{const[a,m,k]=btn.dataset.p.split(',');alku.value=a;maara.value=m;askel.value=k;paivita()});
 asetaNopeus(12);paivita();
 </script></body></html>
