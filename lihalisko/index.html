@@ -26,7 +26,8 @@ button.on{background:var(--on)}button.iso{font-size:16px;padding:10px 16px;backg
   <h2>1. Rajaus <span class="pieni">– vedä uusi laatikko kuvan päälle, siirrä laatikkoa raahaamalla, koko kulmasta. Rajaus jää voimaan.</span></h2>
   <div class="alue" id="alue"><img id="iso" alt="ruutu"><div class="raja" id="raja"><div class="kahva" id="kahva"></div></div></div>
   <p class="pieni" id="rajaTeksti"></p>
-  <label><input type="checkbox" id="lapi" checked> Läpinäkyvä tausta (vain lisko + käsi)</label><button id="neliö">Neliö</button><button id="koko">Koko kuva</button>
+  <p style="margin:6px 0" id="taustaValinta">Tausta: <label style="display:inline"><input type="radio" name="t" value="gif"> alkuperäinen</label> <label style="display:inline"><input type="radio" name="t" value="gifl" checked> robon maski</label> <label style="display:inline"><input type="radio" name="t" value="gifg"> Gemini (vain ruudut 0–15)</label></p>
+  <p style="margin:6px 0">Oma gif: <input type="file" id="omaGif" accept="image/gif,image/webp,image/png"> <span class="pieni" id="omaTila"></span></p><button id="neliö">Neliö</button><button id="koko">Koko kuva</button>
   <label>Katso ruutua <span id="katsoN"></span></label><input type="range" id="katso" min="0" value="0">
  </section>
  <section class="kortti">
@@ -54,8 +55,8 @@ button.on{background:var(--on)}button.iso{font-size:16px;padding:10px 16px;backg
 </main>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
-const N=115, W0=373, H0=498, kuvat=[];
-let kansio='gifl';const src=i=>`${kansio}/${String(i).padStart(3,'0')}.webp`;
+let N=115, W0=373, H0=498, kuvat=[], oma=false;
+let kansio='gifl';const src=i=>oma?kuvat[i].src:(kansio==='gifg'&&i>15?`gifl/${String(i).padStart(3,'0')}.webp`:`${kansio}/${String(i).padStart(3,'0')}.webp`);
 for(let i=0;i<N;i++){const im=new Image();im.src=src(i);kuvat.push(im)}
 function vaihdaKansio(k){kansio=k;kuvat.forEach((im,i)=>im.src=src(i));paivita()}
 const $=id=>document.getElementById(id);
@@ -70,7 +71,7 @@ function piirraRaja(){const img=$('iso'),sk=img.clientWidth/W0||1,el=$('raja');
  const[w,h]=koko();$('kokoN').textContent=`${w}×${h} px`;const rr=ruudut();$('rivi').textContent=`gif x${raja.x} y${raja.y} ${raja.w}x${raja.h} r${alku.value}+${rr.length}/${askel.value} ${fps}fps ${w}px`;const c=$('c');c.width=w;c.height=h}
 function paivita(){const r=ruudut();$('alkuN').textContent=alku.value;$('maaraN').textContent=r.length+(r.length<+maara.value?' (gif loppui)':'');$('askelN').textContent=askel.value;
  $('nauha').innerHTML=r.map(i=>`<img class="on" src="${src(i)}" title="${i}">`).join('');$('katsoN').textContent=katso.value;
- $('iso').src=kuvat[+katso.value].src;piirraRaja()}
+ $('iso').src=src(+katso.value);piirraRaja()}
 [alku,maara,askel,skaala].forEach(e=>e.oninput=paivita);katso.oninput=paivita;
 $('iso').onload=piirraRaja;addEventListener('resize',piirraRaja);
 // raahaus
@@ -84,7 +85,16 @@ addEventListener('pointermove',e=>{if(!veto)return;const[x,y]=px(e),dx=x-veto.x,
  else{raja.w=Math.round(Math.max(16,Math.min(W0-r.x,r.w+dx)));raja.h=Math.round(Math.max(16,Math.min(H0-r.y,r.h+dy)))}piirraRaja()});
 alue.addEventListener('pointerdown',e=>{if(e.target.closest('#raja'))return;e.preventDefault();const[x,y]=px(e);veto={tapa:'uusi',x,y};alue.setPointerCapture(e.pointerId)});
 addEventListener('pointerup',()=>veto=null);
-$('lapi').onchange=e=>vaihdaKansio(e.target.checked?'gifl':'gif');
+document.querySelectorAll('input[name=t]').forEach(r=>r.onchange=()=>vaihdaKansio(r.value));
+$('omaGif').onchange=async e=>{const f=e.target.files[0];if(!f)return;const t=$('omaTila');
+ if(!('ImageDecoder' in window)){t.textContent='selain ei osaa purkaa gifiä (käytä Chromea tai Edgeä)';return}
+ try{t.textContent='puretaan…';const dec=new ImageDecoder({data:await f.arrayBuffer(),type:f.type||'image/gif'});await dec.tracks.ready;
+  const n=dec.tracks.selectedTrack.frameCount,uudet=[],cv=document.createElement('canvas');
+  for(let i=0;i<n;i++){const{image}=await dec.decode({frameIndex:i});cv.width=image.displayWidth;cv.height=image.displayHeight;cv.getContext('2d').drawImage(image,0,0);image.close();
+   const im=new Image();im.src=cv.toDataURL('image/png');await im.decode();uudet.push(im)}
+  kuvat=uudet;N=n;W0=cv.width;H0=cv.height;oma=true;alku.max=katso.max=N-1;alku.value=katso.value=0;raja={x:0,y:0,w:W0,h:H0};
+  $('taustaValinta').style.display='none';document.querySelectorAll('[data-p]').forEach(b=>b.style.display='none');
+  t.textContent=`✅ ${n} ruutua, ${W0}×${H0} px`;paivita()}catch(err){t.textContent='🔴 '+err.message}};
 $('neliö').onclick=()=>{const m=Math.min(raja.w,raja.h);raja.w=raja.h=m;piirraRaja()};
 $('koko').onclick=()=>{raja={x:0,y:0,w:W0,h:H0};piirraRaja()};
 function piirra(g,im,w,h){g.clearRect(0,0,w,h);if($('tayta').checked&&$('vari').value){g.fillStyle=$('vari').value;g.fillRect(0,0,w,h)}
