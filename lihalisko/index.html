@@ -42,7 +42,7 @@ button.on{background:var(--on)}button.iso{font-size:16px;padding:10px 16px;backg
   <label>Lopullinen koko: <b id="kokoN"></b></label><input type="range" id="skaala" min="10" max="100" value="100">
   <p><button class="iso" id="lataa">⬇ Lataa zip (0_2_a_N.png)</button></p>
   <p class="pieni" id="tila"></p>
-  <p class="pieni">Tai kopioi tämä rivi chattiin robolle: <code id="rivi"></code></p>
+  <p>Jaa valinta robolle chatissa: <code id="rivi"></code> <button class="iso" id="kopioi">📋 Kopioi</button> <span class="pieni" id="kopioitu"></span></p>
  </section>
 </div>
 <section class="kortti" style="margin-top:16px">
@@ -92,7 +92,7 @@ function piirra(g,im,w,h){g.clearRect(0,0,w,h);if($('tayta').checked&&$('vari').
 $('tayta').onchange=$('vari').onchange=piirraRaja;
 // esikatselu
 const napit=$('napit');[24,12,8,6,4,3,2].forEach(v=>{const b=document.createElement('button');b.textContent=v+' kuvaa/s';b.dataset.v=v;b.onclick=()=>asetaNopeus(v);napit.append(b)});
-function asetaNopeus(v){fps=v;piirraRaja&&setTimeout(piirraRaja);[...napit.children].forEach(b=>b.classList.toggle('on',+b.dataset.v===v));clearInterval(ajastin);
+function asetaNopeus(v){fps=v;setTimeout(piirraRaja);[...napit.children].forEach(b=>b.classList.toggle('on',+b.dataset.v===v));clearInterval(ajastin);
  ajastin=setInterval(()=>{const r=ruudut();if(!r.length)return;const i=r[nyt++%r.length],im=kuvat[i],c=$('c');
   if(im.complete)piirra(c.getContext('2d'),im,c.width,c.height);
   [...$('nauha').children].forEach((el,k)=>el.style.outline=k===(nyt-1)%r.length?'2px solid #ff0':'none')},1000/v)}
@@ -105,5 +105,6 @@ $('lataa').onclick=async()=>{const r=ruudut(),[w,h]=koko(),zip=new JSZip(),c=doc
  const blob=await zip.generateAsync({type:'blob'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='workshop-ruudut.zip';a.click();
  $('tila').textContent=`✅ ${r.length} kuvaa, ${w}×${h} px. Nopeus editoriin: ${fps} kuvaa/s.`};
 document.querySelectorAll('[data-p]').forEach(btn=>btn.onclick=()=>{const[a,m,k]=btn.dataset.p.split(',');alku.value=a;maara.value=m;askel.value=k;paivita()});
+$('kopioi').onclick=async()=>{const t=$('rivi').textContent;try{await navigator.clipboard.writeText(t);$('kopioitu').textContent='kopioitu, liitä chattiin'}catch(e){const r=document.createRange();r.selectNodeContents($('rivi'));getSelection().removeAllRanges();getSelection().addRange(r);$('kopioitu').textContent='valittu: paina Ctrl+C'}};
 asetaNopeus(12);paivita();
 </script></body></html>
