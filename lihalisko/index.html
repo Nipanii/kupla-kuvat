@@ -9,7 +9,7 @@ main{max-width:1100px;margin:auto}h1{font-size:21px;margin:0 0 6px}h2{font-size:
 @media(max-width:760px){.ruudukko{grid-template-columns:minmax(0,1fr)}}
 .kortti{background:var(--kortti);border-radius:6px;padding:12px}
 .alue{position:relative;display:inline-block;max-width:100%;touch-action:none;user-select:none;overflow:hidden}
-.alue img{display:block;max-width:100%;height:auto}
+.alue img{display:block;max-width:100%;height:auto;background:repeating-conic-gradient(#ccc 0 25%,#fff 0 50%) 0 0/16px 16px}
 .raja{position:absolute;border:2px solid #ff0;box-shadow:0 0 0 9999px #0008;cursor:move}
 .kahva{position:absolute;width:16px;height:16px;right:-9px;bottom:-9px;background:#ff0;border:2px solid #000;cursor:nwse-resize}
 canvas{background:repeating-conic-gradient(#ccc 0 25%,#fff 0 50%) 0 0/16px 16px;border:2px solid #000;max-width:100%;height:auto;display:block}
@@ -26,7 +26,7 @@ button.on{background:var(--on)}button.iso{font-size:16px;padding:10px 16px;backg
   <h2>1. Rajaus <span class="pieni">– vedä uusi laatikko kuvan päälle, siirrä laatikkoa raahaamalla, koko kulmasta. Rajaus jää voimaan.</span></h2>
   <div class="alue" id="alue"><img id="iso" alt="ruutu"><div class="raja" id="raja"><div class="kahva" id="kahva"></div></div></div>
   <p class="pieni" id="rajaTeksti"></p>
-  <button id="neliö">Neliö</button><button id="koko">Koko kuva</button>
+  <label><input type="checkbox" id="lapi" checked> Läpinäkyvä tausta (vain lisko + käsi)</label><button id="neliö">Neliö</button><button id="koko">Koko kuva</button>
   <label>Katso ruutua <span id="katsoN"></span></label><input type="range" id="katso" min="0" value="0">
  </section>
  <section class="kortti">
@@ -54,7 +54,9 @@ button.on{background:var(--on)}button.iso{font-size:16px;padding:10px 16px;backg
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
 const N=115, W0=373, H0=498, kuvat=[];
-for(let i=0;i<N;i++){const im=new Image();im.src=`gif/${String(i).padStart(3,'0')}.webp`;kuvat.push(im)}
+let kansio='gifl';const src=i=>`${kansio}/${String(i).padStart(3,'0')}.webp`;
+for(let i=0;i<N;i++){const im=new Image();im.src=src(i);kuvat.push(im)}
+function vaihdaKansio(k){kansio=k;kuvat.forEach((im,i)=>im.src=src(i));paivita()}
 const $=id=>document.getElementById(id);
 let raja={x:102,y:40,w:255,h:455}, fps=12, ajastin, nyt=0;
 const alku=$('alku'),maara=$('maara'),askel=$('askel'),katso=$('katso'),skaala=$('skaala');
@@ -66,7 +68,7 @@ function piirraRaja(){const img=$('iso'),sk=img.clientWidth/W0||1,el=$('raja');
  $('rajaTeksti').textContent=`x ${raja.x}, y ${raja.y}, ${raja.w}×${raja.h} px (alkuperäinen ${W0}×${H0})`;
  const[w,h]=koko();$('kokoN').textContent=`${w}×${h} px`;const rr=ruudut();$('rivi').textContent=`gif x${raja.x} y${raja.y} ${raja.w}x${raja.h} r${alku.value}+${rr.length}/${askel.value} ${fps}fps ${w}px`;const c=$('c');c.width=w;c.height=h}
 function paivita(){const r=ruudut();$('alkuN').textContent=alku.value;$('maaraN').textContent=r.length+(r.length<+maara.value?' (gif loppui)':'');$('askelN').textContent=askel.value;
- $('nauha').innerHTML=r.map(i=>`<img class="on" src="gif/${String(i).padStart(3,'0')}.webp" title="${i}">`).join('');$('katsoN').textContent=katso.value;
+ $('nauha').innerHTML=r.map(i=>`<img class="on" src="${src(i)}" title="${i}">`).join('');$('katsoN').textContent=katso.value;
  $('iso').src=kuvat[+katso.value].src;piirraRaja()}
 [alku,maara,askel,skaala].forEach(e=>e.oninput=paivita);katso.oninput=paivita;
 $('iso').onload=piirraRaja;addEventListener('resize',piirraRaja);
@@ -81,6 +83,7 @@ addEventListener('pointermove',e=>{if(!veto)return;const[x,y]=px(e),dx=x-veto.x,
  else{raja.w=Math.round(Math.max(16,Math.min(W0-r.x,r.w+dx)));raja.h=Math.round(Math.max(16,Math.min(H0-r.y,r.h+dy)))}piirraRaja()});
 alue.addEventListener('pointerdown',e=>{if(e.target.closest('#raja'))return;e.preventDefault();const[x,y]=px(e);veto={tapa:'uusi',x,y};alue.setPointerCapture(e.pointerId)});
 addEventListener('pointerup',()=>veto=null);
+$('lapi').onchange=e=>vaihdaKansio(e.target.checked?'gifl':'gif');
 $('neliö').onclick=()=>{const m=Math.min(raja.w,raja.h);raja.w=raja.h=m;piirraRaja()};
 $('koko').onclick=()=>{raja={x:0,y:0,w:W0,h:H0};piirraRaja()};
 function piirra(g,im,w,h){g.clearRect(0,0,w,h);if($('tayta').checked&&$('vari').value){g.fillStyle=$('vari').value;g.fillRect(0,0,w,h)}
