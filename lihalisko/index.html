@@ -12,7 +12,7 @@ main{max-width:1100px;margin:auto}h1{font-size:21px;margin:0 0 6px}h2{font-size:
 .alue img{display:block;max-width:100%;height:auto}
 .raja{position:absolute;border:2px solid #ff0;box-shadow:0 0 0 9999px #0008;cursor:move}
 .kahva{position:absolute;width:16px;height:16px;right:-9px;bottom:-9px;background:#ff0;border:2px solid #000;cursor:nwse-resize}
-canvas{background:#fff;border:2px solid #000;max-width:100%;height:auto;display:block}
+canvas{background:repeating-conic-gradient(#ccc 0 25%,#fff 0 50%) 0 0/16px 16px;border:2px solid #000;max-width:100%;height:auto;display:block}
 label{display:block;margin:8px 0 2px}input[type=range]{width:100%}
 button{background:var(--nappi);color:#fff;border:1px solid #000;border-radius:4px;padding:6px 10px;cursor:pointer;margin:2px}
 button.on{background:var(--on)}button.iso{font-size:16px;padding:10px 16px;background:var(--on)}
@@ -37,6 +37,7 @@ button.on{background:var(--on)}button.iso{font-size:16px;padding:10px 16px;backg
   <label>Joka n:s ruutu: <b id="askelN"></b></label><input type="range" id="askel" min="1" max="6" value="1">
   <div class="nauha" id="nauha"></div>
   <p style="margin:10px 0 4px">Nopeus (editorin Animaatio-välilehdellä sama valinta):</p><div id="napit"></div>
+  <label><input type="checkbox" id="tayta"> Neliö 1:1, täyttö ympärille <select id="vari"><option value="#000">musta</option><option value="">läpinäkyvä</option><option value="#fff">valkoinen</option></select></label>
   <label>Lopullinen koko: <b id="kokoN"></b></label><input type="range" id="skaala" min="10" max="100" value="100">
   <p><button class="iso" id="lataa">⬇ Lataa zip (0_2_a_N.png)</button></p>
   <p class="pieni" id="tila"></p>
@@ -59,7 +60,7 @@ let raja={x:102,y:40,w:255,h:455}, fps=12, ajastin, nyt=0;
 const alku=$('alku'),maara=$('maara'),askel=$('askel'),katso=$('katso'),skaala=$('skaala');
 alku.max=N-1;katso.max=N-1;
 function ruudut(){const a=+alku.value,s=+askel.value,m=+maara.value,r=[];for(let k=0;k<m;k++){const i=a+k*s;if(i<N)r.push(i)}return r}
-function koko(){const k=+skaala.value/100;let w=Math.round(raja.w*k),h=Math.round(raja.h*k);const m=Math.max(w,h);if(m>512){w=Math.round(w*512/m);h=Math.round(h*512/m)}return[Math.max(1,w),Math.max(1,h)]}
+function koko(){const k=+skaala.value/100;let w=Math.round(raja.w*k),h=Math.round(raja.h*k);if($('tayta').checked)w=h=Math.max(w,h);const m=Math.max(w,h);if(m>512){w=Math.round(w*512/m);h=Math.round(h*512/m)}return[Math.max(1,w),Math.max(1,h)]}
 function piirraRaja(){const img=$('iso'),sk=img.clientWidth/W0||1,el=$('raja');
  Object.assign(el.style,{left:raja.x*sk+'px',top:raja.y*sk+'px',width:raja.w*sk+'px',height:raja.h*sk+'px'});
  $('rajaTeksti').textContent=`x ${raja.x}, y ${raja.y}, ${raja.w}×${raja.h} px (alkuperäinen ${W0}×${H0})`;
@@ -82,16 +83,19 @@ alue.addEventListener('pointerdown',e=>{if(e.target.closest('#raja'))return;e.pr
 addEventListener('pointerup',()=>veto=null);
 $('neliö').onclick=()=>{const m=Math.min(raja.w,raja.h);raja.w=raja.h=m;piirraRaja()};
 $('koko').onclick=()=>{raja={x:0,y:0,w:W0,h:H0};piirraRaja()};
+function piirra(g,im,w,h){g.clearRect(0,0,w,h);if($('tayta').checked&&$('vari').value){g.fillStyle=$('vari').value;g.fillRect(0,0,w,h)}
+ const sk=Math.min(w/raja.w,h/raja.h),dw=raja.w*sk,dh=raja.h*sk;g.drawImage(im,raja.x,raja.y,raja.w,raja.h,(w-dw)/2,(h-dh)/2,dw,dh)}
+$('tayta').onchange=$('vari').onchange=piirraRaja;
 // esikatselu
 const napit=$('napit');[24,12,8,6,4,3,2].forEach(v=>{const b=document.createElement('button');b.textContent=v+' kuvaa/s';b.dataset.v=v;b.onclick=()=>asetaNopeus(v);napit.append(b)});
 function asetaNopeus(v){fps=v;piirraRaja&&setTimeout(piirraRaja);[...napit.children].forEach(b=>b.classList.toggle('on',+b.dataset.v===v));clearInterval(ajastin);
  ajastin=setInterval(()=>{const r=ruudut();if(!r.length)return;const i=r[nyt++%r.length],im=kuvat[i],c=$('c');
-  if(im.complete)c.getContext('2d').drawImage(im,raja.x,raja.y,raja.w,raja.h,0,0,c.width,c.height);
+  if(im.complete)piirra(c.getContext('2d'),im,c.width,c.height);
   [...$('nauha').children].forEach((el,k)=>el.style.outline=k===(nyt-1)%r.length?'2px solid #ff0':'none')},1000/v)}
 // lataus
 $('lataa').onclick=async()=>{const r=ruudut(),[w,h]=koko(),zip=new JSZip(),c=document.createElement('canvas');c.width=w;c.height=h;const g=c.getContext('2d');
  $('tila').textContent='tehdään…';
- for(let k=0;k<r.length;k++){const im=kuvat[r[k]];if(!im.complete)await new Promise(ok=>im.onload=ok);g.clearRect(0,0,w,h);g.drawImage(im,raja.x,raja.y,raja.w,raja.h,0,0,w,h);
+ for(let k=0;k<r.length;k++){const im=kuvat[r[k]];if(!im.complete)await new Promise(ok=>im.onload=ok);piirra(g,im,w,h);
   const b=await new Promise(ok=>c.toBlob(ok,'image/png'));zip.file(`0_2_a_${k}.png`,b)}
  zip.file('LUE.txt',`${r.length} ruutua (alkuperäiset ${r.join(',')}), ${w}x${h} px, nopeus ${fps} kuvaa/s (editorissa Animaatio: ${fps} kuvaa/s).\nRajaus x${raja.x} y${raja.y} ${raja.w}x${raja.h}.\n`);
  const blob=await zip.generateAsync({type:'blob'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='workshop-ruudut.zip';a.click();
