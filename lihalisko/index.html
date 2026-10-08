@@ -60,7 +60,7 @@ let kansio='gifl';const src=i=>oma?kuvat[i].src:(kansio==='gifg'&&i>15?`gifl/${S
 for(let i=0;i<N;i++){const im=new Image();im.src=src(i);kuvat.push(im)}
 function vaihdaKansio(k){kansio=k;kuvat.forEach((im,i)=>im.src=src(i));paivita()}
 const $=id=>document.getElementById(id);
-let raja={x:102,y:40,w:255,h:455}, fps=12, ajastin, nyt=0;
+let raja={x:0,y:0,w:W0,h:H0}, fps=12, ajastin, nyt=0;
 const alku=$('alku'),maara=$('maara'),askel=$('askel'),katso=$('katso'),skaala=$('skaala');
 alku.max=N-1;katso.max=N-1;
 function ruudut(){const a=+alku.value,s=+askel.value,m=+maara.value,r=[];for(let k=0;k<m;k++){const i=a+k*s;if(i<N)r.push(i)}return r}
