@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="fi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Messenger-uudistus</title>
+<style>
+body{margin:0;background:#0b1018;color:#dce6f2;font-family:Ubuntu,system-ui,sans-serif;line-height:1.5}
+main{max-width:1000px;margin:0 auto;padding:16px}
+h1{font-size:22px;border-bottom:2px solid #267f93;padding-bottom:6px}h2{font-size:17px;color:#2fa3bd;margin-top:26px}
+img{width:100%;border:1px solid #283f5d;border-radius:6px}
+code{background:#152131;padding:1px 5px;border-radius:3px}
+.muted{color:#8193aa;font-size:13px}
+li{margin:4px 0}
+</style></head><body><main>
+<h1>Kaverit &amp; viestit — luonnos</h1>
+<p class="muted">Robo, 10.10.2026 klo 04. Luonnos keskustelun pohjaksi. Mitään ei ole vielä koodattu.</p>
+<img src="luonnos.png" alt="Luonnos: kaverit ja viestit samassa ikkunassa">
+
+<h2>Mitä korjaa (Resin lista 04:13)</h2>
+<ul>
+<li><b>Piilotettu</b> → pysyvä 💬-nappi työkalupalkissa, siinä lukemattomien määrä. Uusi viesti näkyy ilmoituksena kulmassa.</li>
+<li><b>Ei kanavia</b> → julkiset kanavat (#yleinen, #kauppa, #apua…), joihin kuka tahansa voi liittyä.</li>
+<li><b>Ei ryhmiä</b> → kutsuttavat ryhmäkeskustelut.</li>
+<li><b>Ei offline-viestejä</b> → viesti tallentuu ja toimitetaan, kun vastaanottaja kirjautuu.</li>
+<li><b>Monta ikkunaa</b> → kaverilista ja viestit samassa ikkunassa välilehtinä (Viestit · Kaverit · Pyynnöt · Haku).</li>
+</ul>
+
+<h2>Palvelinpuoli (Daybreak-plugin, kuten muut kuplan pluginit)</h2>
+<ul>
+<li><b>Offline-viestit:</b> nyt <code>MessengerBuddy.onMessageReceived</code> palaa heti, jos vastaanottaja ei ole paikalla, ja viesti katoaa.
+Muutos: tallennus tauluun <code>messenger_offline</code> → toimitus kirjautuessa.
+Clientin <code>NewConsoleMessage</code>-paketissa on jo kenttä "sekuntia sitten", joten vanha viesti näkyy oikealla ajalla.</li>
+<li><b>Ryhmät:</b> taulut <code>messenger_groups</code> + <code>messenger_group_members</code> + viestit. Lähetys vain paikalla oleville jäsenille, historia N viimeistä viestiä.</li>
+<li><b>Kanavat:</b> taulu <code>messenger_channels</code> (nimi, kuka saa kirjoittaa, minimi-rank) + historia. Liittyminen ja poistuminen omilla paketeilla.</li>
+<li><b>Suojat:</b> sanasuodatin (jo olemassa kaverichatille), nopeusraja, ilmianto, staffille hiljennys ja loki.</li>
+</ul>
+
+<h2>Järjestysehdotus (pienestä isoon)</h2>
+<ol>
+<li><b>Offline-viestit.</b> Pienin muutos, suurin hyöty, ei uutta UI:ta.</li>
+<li><b>Uusi ikkuna</b> (kaverit + viestit + näkyvyys) nykyisillä yksityisviesteillä.</li>
+<li><b>Ryhmät.</b></li>
+<li><b>Kanavat.</b></li>
+</ol>
+<p class="muted">Jokainen vaihe oma PR. Client-osat ensin userscriptinä kokeiltavaksi.</p>
+</main></body></html>
