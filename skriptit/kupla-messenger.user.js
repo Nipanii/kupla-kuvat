@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.3.0
+// @version      0.3.1
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/kupla-messenger.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/kupla-messenger.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -20,6 +20,7 @@
  *   valitsimet #km2-rajattuina, ikonit data-URI:na) ja rakenne views/*.tsx:n mukainen. MUOKKAA rakennus/osa1.js + osa2.js ja aja rakennus/kokoa.py, älä tätä tiedostoa.
  *   0.3.0: Res 08:34-08:35 -> Viestit-sivupalkissa Ryhmät ja Kanavat (Datajaon huoneet, vaatii Datajako 0.21.0) ja Datajako-välilehden
  *   tilalla Skriptit (lisäosat; packet tools ja makrot tulevat sinne).
+ *   0.3.1: Res 08:47 "hahmojen päät on vinksallaan" -> päät pelin omalla piirtäjällä (90x130, hattuineen) kuten v3:ssa.
  * MITEN: pelin React-tilaa ei saa ulkoa, joten skripti kääri clientin omat parserit (lukee jäsennetyt kentät heti parse():n jälkeen)
  *   ja lähettää clientin omilla paketeilla `conn.sendPacket(header, arvot)` (SocketConnection.ts:921). Uusia pakettimuotoja ei ole.
  * RAJAT: ennen skriptin latautumista tulleet yksityisviestit näkyvät vain pelin omassa ikkunassa. Viestit ovat vain muistissa
@@ -31,7 +32,7 @@
   const VW = window;
   if (VW.__kuplaMessenger) return; VW.__kuplaMessenger = true;
   // testiä varten uudelleenasennettava: käärityt parserit kutsuvat AINA viimeisintä käsittelijätaulua (VW.__km2K)
-  const VERSIO = '0.3.0';
+  const VERSIO = '0.3.1';
   // uudelleenasennus (testi) pysäyttää edellisen kopion ajastimet: vain uusin sukupolvi elää
   const SUKU = (VW.__km2Suku = (VW.__km2Suku || 0) + 1), elossa = () => VW.__km2Suku === SUKU;
   const ajoita = (f, ms) => { const h = setInterval(() => { if (!elossa()) return clearInterval(h); f(h); }, ms); return h; };
@@ -149,6 +150,33 @@
   const KUVATILA = new Map();
   const ilmanHattua = asu => String(asu).split('.').filter(o => !/^(ha|he)-/.test(o)).join('.');
   const paaUrl = (asu, suunta) => location.origin + '/avatarimage?figure=' + encodeURIComponent(ilmanHattua(asu)) + '&headonly=1&size=l&direction=' + suunta + '&head_direction=' + suunta;
+  // 0.3.1 (Res 08:47 "hahmojen päät on vinksallaan ... vs sketchit"): ensisijaisesti pelin OMA piirtäjä, kuten v3:n LayoutAvatarImageView
+  // (createAvatarImage LARGE, setDirection('head'), processAsImageUrl('head')). Se antaa aina saman 90x130-kankaan hattuineen, jolle
+  // v3:n oma CSS (background-position 50% -36px / -32px) on mitattu. Piirtäjään päästään huoneen avatar-visualisoinnin datasta
+  // (AvatarVisualizationData.createAvatarImage kutsuu GetAvatarRenderManageria); ilman huonetta käytetään palvelimen kuvaa kuten ennen.
+  const PELIKUVA = new Map();
+  function pelinPiirtaja() {
+    if (VW.__km2AvData) return VW.__km2AvData;
+    try { const re = VW.NitroDevTools && VW.NitroDevTools.roomEngine, h = re && re._roomManager && re._roomManager._rooms;
+      if (h) for (const r of h.values()) { const ob = r && r._renderer && r._renderer._objects; if (!ob) continue;
+        for (const x of ob.values()) { const d = x && x._visualization && x._visualization._data;
+          if (d && typeof d.createAvatarImage === 'function') return (VW.__km2AvData = d); } } } catch (e) {}
+    return null;
+  }
+  function pelinPaa(asu, suunta) {
+    const avain = asu + '|' + suunta; if (PELIKUVA.has(avain)) return PELIKUVA.get(avain);
+    const d = pelinPiirtaja(); if (!d) return null;
+    try {
+      let kuva = null, valmis = false;
+      const piirra1 = () => { try { const u = kuva.processAsImageUrl('head'); if (u) PELIKUVA.set(avain, u); } catch (e) {} };
+      const loppu = () => { if (valmis) return; valmis = true; try { kuva.dispose(); } catch (e) {} };
+      kuva = d.createAvatarImage(asu, 64, 'M', { resetFigure: () => { if (valmis) return; piirra1(); loppu(); paivitaPian(); }, dispose: () => {}, get disposed() { return valmis; } });
+      if (!kuva) return null;
+      kuva.setDirection('head', suunta); piirra1();
+      setTimeout(loppu, 8000);   // osat jo ladattu -> resetFigurea ei tule
+      return PELIKUVA.get(avain) || null;
+    } catch (e) { return null; }
+  }
   function avatar(asu, o) {
     o = o || {};
     const w = el('div', 'km-avw'), a = el('div', 'km-av' + (o.iso ? ' is-large' : '')), k = el('div', 'avatar-image km-imager');
@@ -156,6 +184,8 @@
     if (o.paikalla !== undefined) w.appendChild(el('span', 'km-dot' + (o.paikalla ? ' is-online' : '')));
     const alku = () => { k.classList.add('km-alku'); k.textContent = (o.nimi || '?').slice(0, 1).toUpperCase(); };
     if (!asu) { alku(); return w; }
+    const peli = pelinPaa(asu, o.suunta || 2);
+    if (peli) { k.style.backgroundImage = 'url("' + peli + '")'; return w; }
     const url = paaUrl(asu, o.suunta || 2), tila = KUVATILA.get(url);
     if (tila && tila.w) { const sk = o.iso ? 0.94 : 0.78;
       k.style.setProperty('background-image', 'url("' + url + '")', 'important');
