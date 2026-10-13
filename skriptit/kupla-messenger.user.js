@@ -4,11 +4,11 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.3.1
+// @version      0.4.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/kupla-messenger.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/kupla-messenger.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
-// @description  Kaverit & viestit (v3-ulkoasu), maininnat ja Datajako yhden napin takana. Pelkkä client, ei palvelinmuutoksia.
+// @description  Kaverit & viestit (v3-ulkoasu), kanavat, maininnat ja Datajako yhden napin takana.
 // @kupla-oletus off
 // @author       re-lab
 // ==/UserScript==
@@ -21,8 +21,11 @@
  *   0.3.0: Res 08:34-08:35 -> Viestit-sivupalkissa Ryhmät ja Kanavat (Datajaon huoneet, vaatii Datajako 0.21.0) ja Datajako-välilehden
  *   tilalla Skriptit (lisäosat; packet tools ja makrot tulevat sinne).
  *   0.3.1: Res 08:47 "hahmojen päät on vinksallaan" -> päät pelin omalla piirtäjällä (90x130, hattuineen) kuten v3:ssa.
+ *   0.4.0: Res 09:00 "foorumikanavat korvaa datajaon kanavat" -> Kanavat-osio käyttää messenger-pluginin kanavia (foorumipaketit
+ *   negatiivisella id:llä, ChannelService). Jos palvelin ei vastaa, Datajaon kanavat kuten ennen.
  * MITEN: pelin React-tilaa ei saa ulkoa, joten skripti kääri clientin omat parserit (lukee jäsennetyt kentät heti parse():n jälkeen)
- *   ja lähettää clientin omilla paketeilla `conn.sendPacket(header, arvot)` (SocketConnection.ts:921). Uusia pakettimuotoja ei ole.
+ *   ja lähettää clientin omilla paketeilla `conn.sendPacket(header, arvot)` (SocketConnection.ts:921). Kanavat (0.4.0)
+ *   tarvitsevat messenger-pluginin ChannelServicen: foorumipaketit negatiivisella id:llä + uudet 9417-9420 (liity/poistu/luo/poista).
  * RAJAT: ennen skriptin latautumista tulleet yksityisviestit näkyvät vain pelin omassa ikkunassa. Viestit ovat vain muistissa
  *   (ei levylle). Kaverilista pyydetään uudelleen (2781) jos sitä ei näkynyt; pyynnöt ja maininnat vain Päivitä-napista, koska
  *   pelin oma client näyttäisi maininnoista kuplat uudelleen. Yksityisviesti max 255 merkkiä (palvelin leikkaa, SendMsgMessageEvent.java:30).
@@ -32,7 +35,7 @@
   const VW = window;
   if (VW.__kuplaMessenger) return; VW.__kuplaMessenger = true;
   // testiä varten uudelleenasennettava: käärityt parserit kutsuvat AINA viimeisintä käsittelijätaulua (VW.__km2K)
-  const VERSIO = '0.3.1';
+  const VERSIO = '0.4.0';
   // uudelleenasennus (testi) pysäyttää edellisen kopion ajastimet: vain uusin sukupolvi elää
   const SUKU = (VW.__km2Suku = (VW.__km2Suku || 0) + 1), elossa = () => VW.__km2Suku === SUKU;
   const ajoita = (f, ms) => { const h = setInterval(() => { if (!elossa()) return clearInterval(h); f(h); }, ms); return h; };
@@ -110,9 +113,56 @@
   };
   const kopioiMaininta = m => ({ id: m.mentionId, lahettajaId: m.senderId, lahettaja: m.senderUsername, asu: m.senderFigure || '', huone: m.roomId,
     huoneNimi: m.roomName || '', viesti: m.message || '', aika: m.timestamp, luettu: !!m.read });
+  // ---------- kanavat: messenger-pluginin ChannelService (Res 13.10. 09:00 "foorumikanavat korvaa datajaon kanavat") ----------
+  // Kanava kulkee ryhmäfoorumin paketeissa negatiivisella id:llä: kanava 7 = foorumi -7, sen ainoa ketju = 7. Foorumilista: tila 3 = kaikki
+  // kanavat, 4 = liitetyt. Vastaukset ovat foorumin omia paketteja (3001/3011/509/2049/324), joten pelin omat jäsentimet lukevat ne.
+  // Ellei palvelin vastaa tilaan 3 (plugin ei asennettu), K.tuettu = false ja Kanavat-osio näyttää Datajaon kanavat kuten ennen.
+  const K = T.kanavat = { tuettu: null, kysytty: 0, lista: new Map(), liitetyt: new Set(), viestit: new Map(), hallinta: false, virhe: null, odottaa: 0, koukutettu: 0 };
+  const kopioiKanava = d => ({ id: -d.groupId, nimi: d.name, kuvaus: d.description || '', yhteensa: d.totalMessages, lukematta: d.unreadMessages,
+    viimeinen: d.lastMessageAuthorId > 0 ? { nimi: d.lastMessageAuthorName, t: Date.now() - d.lastMessageTimeAsSecondsAgo * 1000 } : null });
+  const kopioiKanavaViesti = m => ({ id: m.messageId, ind: m.messageIndex, lahettajaId: m.authorId, nimi: m.authorName, asu: m.authorFigure,
+    t: Date.now() - m.creationTime * 1000, teksti: m.messageText, tila: m.state, moderoija: m.adminName });
+  function kanavaViestit(id, uudet) {
+    const m = new Map((K.viestit.get(id) || []).map(v => [v.id, v])); for (const v of uudet) m.set(v.id, v);
+    const l = [...m.values()].sort((a, b) => a.id - b.id); if (l.length > 300) l.splice(0, l.length - 300); K.viestit.set(id, l); return l;
+  }
+  const paivitaKanava = k => K.lista.set(k.id, Object.assign(K.lista.get(k.id) || {}, k));
+  const kanavaAuki = id => T.auki && T.valilehti === 'viestit' && T.aktiivinen === 'k:' + id;
+  const KANAVA_KASITTELIJAT = {
+    3001: p => { if (p.listCode !== 3 && p.listCode !== 4) return; K.tuettu = true; const l = (p.forums || []).map(kopioiKanava);
+      if (p.listCode === 3) { if (p.startIndex === 0) { const ennen = new Set(K.lista.keys()); for (const k of l) ennen.delete(k.id); for (const id of ennen) K.lista.delete(id); } }
+      else { if (p.startIndex === 0) K.liitetyt.clear(); for (const k of l) K.liitetyt.add(k.id); }
+      l.forEach(paivitaKanava); },
+    3011: p => { const d = p.extendedForumData; if (!d || d.groupId >= 0) return; K.tuettu = true; K.hallinta = !!d.isStaf; paivitaKanava(kopioiKanava(d)); },
+    509: p => { if (p.groupId >= 0) return; const id = -p.groupId; kanavaViestit(id, (p.messages || []).map(kopioiKanavaViesti)); if (kanavaAuki(id)) merkitseKanavaLuetuksi(id); },
+    2049: p => { if (p.groupId >= 0 || !p.message) return; const id = -p.groupId, v = kopioiKanavaViesti(p.message); kanavaViestit(id, [v]);
+      K.liitetyt.add(id); const k = K.lista.get(id);
+      if (k) { k.yhteensa = Math.max(k.yhteensa || 0, v.ind + 1); k.viimeinen = { nimi: v.nimi, t: v.t, teksti: v.teksti };
+        if (v.lahettajaId !== oma().id && !kanavaAuki(id)) k.lukematta = (k.lukematta || 0) + 1; }
+      if (kanavaAuki(id)) merkitseKanavaLuetuksi(id); },
+    324: p => { if (p.groupId >= 0 || !p.message) return; kanavaViestit(-p.groupId, [kopioiKanavaViesti(p.message)]); },
+    // 1004 virheraportti: 400 viesti/nimi, 403 ei oikeutta tai mykistetty, 404 kanavaa ei ole. Kohdistetaan vain juuri tehtyyn kanavatoimeen.
+    1004: p => { if (K.odottaa && Date.now() - K.odottaa < 4000) { K.virhe = { koodi: p.errorCode, t: Date.now() }; K.odottaa = 0; } },
+  };
+  function kysyKanavat() { K.kysytty = Date.now(); laheta(873, [3, 0, 20]); laheta(873, [4, 0, 20]); }
+  function avaaKanava(id) { const k = K.lista.get(id); laheta(3149, [-id]); laheta(232, [-id, id, Math.max(0, ((k && k.yhteensa) || 0) - 50), 50]); }
+  function merkitseKanavaLuetuksi(id) {
+    const l = K.viestit.get(id) || [], v = l[l.length - 1], k = K.lista.get(id); if (k) k.lukematta = 0;
+    if (K.liitetyt.has(id)) laheta(1855, [1, -id, v ? v.id : 0, !v]);
+  }
+  const kanavaToimi = (h, arvot) => { K.odottaa = Date.now(); K.virhe = null; return laheta(h, arvot); };
+  const lahetaKanavaan = (id, teksti) => kanavaToimi(3529, [-id, id, '', teksti]);
+  const liityKanavaan = id => { K.liitetyt.add(id); kanavaToimi(9417, [id]); };
+  const poistuKanavasta = id => { K.liitetyt.delete(id); kanavaToimi(9418, [id]); };
+  const luoKanava = (nimi, kuvaus) => kanavaToimi(9419, [nimi, kuvaus]);
+  const poistaKanava = id => kanavaToimi(9420, [id]);
+  const moderoiKanavaViesti = (id, viestiId, tila) => kanavaToimi(286, [-id, id, viestiId, tila]);
+
   function koukuta() {
     const c = yhteys(); if (!c) return false;
-    VW.__km2K = Object.assign({}, KASITTELIJAT, { paivita: paivitaPian });
+    VW.__km2K = Object.assign({}, KASITTELIJAT, KANAVA_KASITTELIJAT, { paivita: paivitaPian });
+    if (!K.koukutettu) { let n = 0; for (const id of Object.keys(KANAVA_KASITTELIJAT)) if (kaari(c, +id, KANAVA_KASITTELIJAT[id])) n++;
+      if (n === Object.keys(KANAVA_KASITTELIJAT).length) K.koukutettu = Date.now(); }
     let ok = 0; for (const id of Object.keys(KASITTELIJAT)) if (kaari(c, +id, KASITTELIJAT[id])) ok++;
     if (ok === Object.keys(KASITTELIJAT).length) { if (!T.koukutettu) { T.koukutettu = Date.now(); loki('koukut asennettu', ok); } return true; }
     return false;
@@ -120,6 +170,11 @@
   ajoita(h => { if (koukuta()) { clearInterval(h); rakennaUI(); } }, 150);
   // kaverilista: jos skripti latautui vasta listan jälkeen, pyydetään uudelleen (peli yhdistää kaverit id:llä, useFriends.ts:255-267)
   ajoita(() => { if (T.koukutettu && !T.kaverilistaSaatu && Date.now() - T.koukutettu > 8000) { T.kaverilistaSaatu = -1; laheta(2781, []); loki('kaverilista pyydetty uudelleen (2781)'); } }, 2000);
+  // kanavat: koukut (uudelleen kunnes kaikki 6 löytyvät), sitten kysely tiloilla 3 ja 4. Ei vastausta 6 s -> plugin ei ole palvelimella.
+  ajoita(h => { if (!T.koukutettu) return; if (!K.koukutettu) { koukuta(); if (!K.koukutettu) return; }
+    if (!K.kysytty) { kysyKanavat(); return; }
+    if (K.tuettu === null && Date.now() - K.kysytty > 6000) { K.tuettu = false; loki('kanavat: palvelin ei vastannut foorumilistan tilaan 3 -> Datajaon kanavat'); paivitaPian(); }
+    if (K.tuettu !== null) clearInterval(h); }, 1000);
 
   // ---------- apurit ----------
   const el = (tag, cls, teksti, attr) => { const e = document.createElement(tag); if (cls) e.className = cls; if (teksti != null) e.textContent = teksti; if (attr) for (const k in attr) e.setAttribute(k, attr[k]); return e; };
@@ -986,6 +1041,8 @@
 #km2 .km-djpaikka .dj-takaisin{display:none!important}
 #km2 .km-djpaikka > .dj-ikkuna{position:relative!important;inset:auto!important;flex:1;min-height:0;display:flex;flex-direction:column}
 #km2 .km-sec .km-sec-ohje{margin-left:auto;font-weight:normal;letter-spacing:0;text-transform:none;font-size:10.5px}
+#km2 .km-txt .km-mod{margin-left:8px;font-size:10.5px;color:#7f92aa;cursor:pointer;text-decoration:underline}
+#km2 .km-txt.km-piilossa{font-style:italic;color:#7f92aa}
 #km2 .km-tulossa{padding:8px 14px;border-top:1px solid #22364f;color:#7f92aa;font-size:12px}
 #km2 .km-x{width:10px;height:12px}
 #km2 .km-av .avatar-image.km-alku{display:flex;align-items:center;justify-content:center;color:#9fb3c8;font-weight:bold;font-size:15px;background:none!important}
@@ -1069,7 +1126,7 @@
   function paivitaMerkit() {
     // Datajako asuu Viestit-ikkunan välilehdellä (Res 13.10. 07:38): sen oma kelluva 💬-nappi piiloon, lukemattomat näkyvät tämän napin luvussa
     const dju = djUI(); if (dju && dju.avaaja && dju.avaaja.style.display !== 'none') dju.avaaja.style.display = 'none';
-    const yht = lukemattomat() + mainintojaUusia() + djLukematta();
+    const yht = lukemattomat() + mainintojaUusia() + djLukematta() + kanavaLukematta();
     if (nappiMerkki) { nappiMerkki.textContent = yht > 99 ? '99+' : String(yht); nappiMerkki.style.display = yht ? '' : 'none'; }
     if (juuri && T.auki) piirraTabit();
   }
@@ -1078,7 +1135,7 @@
 
   function piirraTabit() {
     tabit.textContent = '';
-    const luvut = { viestit: [lukemattomat() + djLukematta()], pyynnot: [T.pyynnot.size, true], maininnat: [mainintojaUusia()] };
+    const luvut = { viestit: [lukemattomat() + djLukematta() + kanavaLukematta()], pyynnot: [T.pyynnot.size, true], maininnat: [mainintojaUusia()] };
     for (const v of VALILEHDET) {
       const on = T.valilehti === v.k;
       const b = el('button', 'km-tab' + (on ? ' is-active' : ''), null, { type: 'button', role: 'tab', 'aria-selected': String(on) });
@@ -1104,7 +1161,7 @@
       if (e.dataset.kmvAlas === '1') e.scrollTop = (!s || s.pohjassa) ? e.scrollHeight : s.top; else if (s) e.scrollTop = s.top; });
     if (fokus) { const e = p.querySelector('[data-km="' + fokus.k + '"]'); if (e) { e.focus(); try { if (fokus.a != null) e.setSelectionRange(fokus.a, fokus.b); } catch (er) {} } }
     const dju = djUI(); if (dju && dju.avaaja) dju.avaaja.style.display = 'none';
-    if (nappiMerkki) { const yht = lukemattomat() + mainintojaUusia() + djLukematta(); nappiMerkki.textContent = yht > 99 ? '99+' : String(yht); nappiMerkki.style.display = yht ? '' : 'none'; }
+    if (nappiMerkki) { const yht = lukemattomat() + mainintojaUusia() + djLukematta() + kanavaLukematta(); nappiMerkki.textContent = yht > 99 ? '99+' : String(yht); nappiMerkki.style.display = yht ? '' : 'none'; }
   }
 
   // ---------- Viestit (MessengerConversationsTab + MessengerThreadPane) ----------
@@ -1116,6 +1173,7 @@
   // ominaisuudet liite, osoita ja toiminto"). Datajaon huone näytetään oikeassa palstassa Datajakon omana chat-näkymänä, jonka
   // kirjoitusrivillä Liite / Osoita / Toiminto jo ovat. Aktiivinen: numero = pelaajan id, 'dj:<id>' = Datajaon huone.
   const onDj = a => typeof a === 'string' && a.startsWith('dj:');
+  const onKanava = a => typeof a === 'string' && a.startsWith('k:');
   const djHuoneet = () => { const u = djUI(); try { return u && typeof u.huoneet === 'function' ? u.huoneet() : null; } catch (e) { return null; } };
   function djRivi(h) {
     const aktiivi = T.aktiivinen === 'dj:' + h.id;
@@ -1153,16 +1211,113 @@
     sc.appendChild(ryhmaOts);
     if (!dj) sc.appendChild(el('div', 'km-empty is-inline', 'Ryhmät ja kanavat tulevat Datajako-lisäosasta (0.21.0 tai uudempi).'));
     else { const r = dj.filter(h => h.tyyppi === 'ryhma'); if (!r.length) sc.appendChild(el('div', 'km-empty is-inline', 'Ei ryhmiä. Uusi ryhmä toimii salasanalla.')); r.forEach(h => sc.appendChild(djRivi(h))); }
-    sc.appendChild(el('div', 'km-sec', 'Kanavat'));
-    if (dj) dj.filter(h => h.tyyppi === 'yhteinen' || h.tyyppi === 'kanava').forEach(h => sc.appendChild(djRivi(h)));
+    if (T.kanavat.tuettu) kanavaSektio(sc);   // palvelimen kanavat korvaavat Datajaon kanavat (Res 09:00)
+    else { sc.appendChild(el('div', 'km-sec', 'Kanavat'));
+      if (dj) dj.filter(h => h.tyyppi === 'yhteinen' || h.tyyppi === 'kanava').forEach(h => sc.appendChild(djRivi(h)));
+      else if (T.kanavat.tuettu === null) sc.appendChild(el('div', 'km-empty is-inline', 'Haetaan kanavia...')); }
     sivu.appendChild(sc); return sivu;
+  }
+  // ---------- Kanavat (palvelimen ChannelService; Res 13.10. 09:00) ----------
+  // Rivi sivupalkissa, kanavan oma paneeli ja uuden kanavan dialogi (vain kun 3011 kertoi oikeudesta: isStaf = acc_channels_manage).
+  const KANAVA_VIRHEET = { 400: 'Viesti tai nimi ei kelpaa (viesti 1-255 merkkiä, nimi 2-32).', 403: 'Ei oikeutta, tai olet mykistetty.',
+    404: 'Kanavaa ei löydy.', 500: 'Palvelinvirhe, yritä uudelleen.' };
+  const kanavaLukematta = () => T.kanavat.tuettu ? [...T.kanavat.lista.values()].reduce((a, k) => a + (T.kanavat.liitetyt.has(k.id) ? k.lukematta || 0 : 0), 0) : 0;
+  const risuAvatar = () => { const w = el('div', 'km-avw'); w.appendChild(el('div', 'km-av km-djav', '#')); return w; };
+  function kanavaRivi(k) {
+    const aktiivi = T.aktiivinen === 'k:' + k.id, liitetty = T.kanavat.liitetyt.has(k.id);
+    const r = el('div', 'km-row' + (aktiivi ? ' is-active' : '') + (liitetty ? '' : ' is-offline'), null, { role: 'button', tabindex: '0' });
+    r.onclick = () => { T.aktiivinen = 'k:' + k.id; avaaKanava(k.id); piirra(); };
+    r.appendChild(risuAvatar());
+    const nm = el('div', 'km-nm'); nm.appendChild(el('span', 'km-name', k.nimi));
+    // listan 3001/3011 ei kanna viestin tekstiä: otetaan se ladatusta ketjusta, jos viimeinen näkyvä viesti on siellä
+    const l = T.kanavat.viestit.get(k.id) || [], vv = l.filter(x => x.tila === 0).slice(-1)[0];
+    const v = vv && (!k.viimeinen || vv.t >= k.viimeinen.t - 2000) ? { nimi: vv.nimi, t: vv.t, teksti: vv.teksti } : k.viimeinen;
+    nm.appendChild(el('small', null, !liitetty ? (k.kuvaus || 'Et ole liittynyt') : v ? v.nimi + (v.teksti ? ': ' + v.teksti : '') : (k.kuvaus || 'Ei viestejä')));
+    const meta = el('div', 'km-row-meta'); meta.appendChild(el('time', null, v && v.t ? listaAika(v.t) : ''));
+    const m = merkkiEl(aktiivi || !liitetty ? 0 : k.lukematta); if (m) meta.appendChild(m);
+    r.append(nm, meta); return r;
+  }
+  function kanavaSektio(sc) {
+    const K = T.kanavat, ots = el('div', 'km-sec', 'Kanavat'); sc.appendChild(ots);
+    if (K.hallinta) { const u = el('span', 'km-sec-action', '+ Uusi', { role: 'button', title: 'Uusi kanava' }); u.onclick = () => { T.dialogi = 'uusiKanava'; piirra(); }; ots.appendChild(u); }
+    const l = [...K.lista.values()].sort((a, b) => (K.liitetyt.has(b.id) - K.liitetyt.has(a.id)) || String(a.nimi).localeCompare(String(b.nimi), 'fi'));
+    if (!l.length) sc.appendChild(el('div', 'km-empty is-inline', 'Ei vielä kanavia.'));
+    l.forEach(k => sc.appendChild(kanavaRivi(k)));
+  }
+  function kanavaPaneeli(id) {
+    const K = T.kanavat, k = K.lista.get(id) || { id, nimi: '#' + id, kuvaus: '' }, l = K.viestit.get(id) || [], liitetty = K.liitetyt.has(id);
+    const main = el('div', 'km-main');
+    const mh = el('div', 'km-mh'); mh.appendChild(risuAvatar());
+    const otsikko = el('div', 'km-mh-title'); otsikko.appendChild(el('b', null, k.nimi)); otsikko.appendChild(el('span', null, k.kuvaus || (liitetty ? 'Liittynyt' : 'Et ole liittynyt')));
+    const toim = el('div', 'km-mh-actions');
+    toim.appendChild(nappiEl(liitetty ? '' : 'is-primary', liitetty ? 'Poistu' : 'Liity', null, () => { liitetty ? poistuKanavasta(id) : liityKanavaan(id); piirra(); }));
+    if (K.hallinta) { const pk = nappiEl('is-square', null, 'remove', () => { T.dialogi = 'poistaKanava'; piirra(); }); pk.title = 'Poista kanava'; pk.setAttribute('aria-label', 'Poista kanava'); toim.appendChild(pk); }
+    const sk = nappiEl('is-square', null, risti(), () => { T.aktiivinen = null; piirra(); }); sk.title = 'Sulje kanava'; sk.setAttribute('aria-label', 'Sulje kanava');
+    toim.appendChild(sk); mh.append(otsikko, toim);
+    const msgs = el('div', 'km-msgs', null, { 'data-kmv': 'kanava-' + id, 'data-kmv-alas': '1' });
+    const huom = el('div', 'km-sys is-notice'); huom.appendChild(el('span', 'nitro-friends-spritesheet icon-warning flex-shrink-0'));
+    huom.appendChild(el('div', 'km-sys-text', 'Kanavan viestit näkyvät kaikille. Henkilötietojen ja salasanan kertominen on sääntöjemme vastaista.'));
+    msgs.appendChild(huom);
+    if (!l.length) msgs.appendChild(el('div', 'km-empty is-inline', k.yhteensa ? 'Haetaan viestejä...' : 'Ei vielä viestejä. Kirjoita ensimmäinen.'));
+    const o = oma(); let edPaiva = '', edLahettaja = null, edT = 0, ryhma = null;
+    for (const v of l) {
+      const pv = paivaNimi(v.t);
+      if (pv !== edPaiva) { msgs.appendChild(el('div', 'km-day', pv)); edPaiva = pv; ryhma = null; }
+      const omaV = v.lahettajaId === o.id;
+      if (!ryhma || v.lahettajaId !== edLahettaja || v.t - edT > 5 * 60e3) {
+        const m = el('div', 'km-m' + (omaV ? ' is-own' : ''));
+        m.appendChild(avatar(v.asu, { iso: true, suunta: omaV ? 4 : 2, nimi: v.nimi }));
+        const runko = el('div', 'km-m-body'); const who = el('div', 'km-who'); who.append(el('span', null, v.nimi), el('span', 'km-ts', klo(v.t)));
+        runko.appendChild(who); m.appendChild(runko); msgs.appendChild(m); ryhma = runko; edLahettaja = v.lahettajaId;
+      }
+      const piilossa = v.tila !== 0;
+      const rivi = el('div', 'km-txt' + (piilossa ? ' km-piilossa' : ''), piilossa ? 'Viesti piilotettu' + (v.moderoija ? ' (' + v.moderoija + ')' : '') + (v.teksti ? ': ' + v.teksti : '') : v.teksti);
+      if (K.hallinta) { const mod = el('span', 'km-mod', piilossa ? 'Palauta' : 'Piilota', { role: 'button', title: piilossa ? 'Näytä viesti kaikille' : 'Piilota viesti muilta' });
+        mod.onclick = () => moderoiKanavaViesti(id, v.id, piilossa ? 0 : 20); rivi.appendChild(mod); }
+      ryhma.appendChild(rivi); edT = v.t;
+    }
+    if (K.virhe && Date.now() - K.virhe.t < 15000) { const s = el('div', 'km-sys is-notice'); s.appendChild(el('div', 'km-sys-text', KANAVA_VIRHEET[K.virhe.koodi] || 'Virhe ' + K.virhe.koodi)); msgs.appendChild(s); }
+    const inp = el('div', 'km-inp'), avain = 'k:' + id;
+    const kentta = el('input', null, null, { type: 'text', maxlength: '255', placeholder: 'Viesti kanavalle ' + k.nimi, 'data-km': 'kanava-' + id }); kentta.value = T.luonnos.get(avain) || '';
+    const laskuri = el('span', 'km-counter'); const lb = nappiEl('is-primary', 'Lähetä');
+    const paivLaskuri = () => { const n = kentta.value.length; laskuri.textContent = n + '/255'; laskuri.style.display = n >= 200 ? '' : 'none'; laskuri.classList.toggle('is-full', n >= 255); lb.disabled = !kentta.value.trim(); };
+    kentta.addEventListener('input', () => { T.luonnos.set(avain, kentta.value); paivLaskuri(); });
+    // ei omaa kaikua: palvelin työntää uuden viestin (2049) myös lähettäjälle, ja virheestä tulee 1004
+    const tee = () => { const teksti = kentta.value.trim().slice(0, 255); if (!teksti) return; lahetaKanavaan(id, teksti); K.liitetyt.add(id); T.luonnos.delete(avain); kentta.value = ''; piirra(); };
+    kentta.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); tee(); } });
+    lb.onclick = tee; paivLaskuri(); inp.append(kentta, laskuri, lb);
+    main.append(mh, msgs, inp);
+    if (T.dialogi === 'uusiKanava' || T.dialogi === 'poistaKanava') main.appendChild(kanavaDialogi(id));
+    return main;
+  }
+  function kanavaDialogi(id) {
+    const ov = el('div', 'km-overlay'); ov.onclick = () => { T.dialogi = null; piirra(); };
+    const d = el('div', 'km-dialog'); d.onclick = e => e.stopPropagation();
+    const peru = nappiEl('', 'Peruuta', null, () => { T.dialogi = null; piirra(); }), r = el('div', 'km-dialog-actions');
+    if (T.dialogi === 'poistaKanava') {
+      const k = T.kanavat.lista.get(id) || { nimi: '#' + id };
+      d.append(el('h3', null, 'Poista kanava'), el('p', null, 'Kanava ' + k.nimi + ' katoaa kaikilta. Viestit jäävät tietokantaan.'));
+      r.append(peru, nappiEl('is-danger', 'Poista', null, () => { poistaKanava(id); T.dialogi = null; T.aktiivinen = null; piirra(); }));
+      d.appendChild(r);
+    } else {
+      d.append(el('h3', null, 'Uusi kanava'), el('p', null, 'Nimi 2-32 merkkiä (kirjaimet, numerot, välilyönti, - ja _). Kuvaus vapaaehtoinen.'));
+      const nimi = el('input', null, null, { type: 'text', maxlength: '32', placeholder: 'Nimi', 'data-km': 'kanava-nimi' }); nimi.value = T.kanavaNimi || '';
+      const kuvaus = el('input', null, null, { type: 'text', maxlength: '255', placeholder: 'Kuvaus', 'data-km': 'kanava-kuvaus' }); kuvaus.value = T.kanavaKuvaus || '';
+      const ok = nappiEl('is-primary', 'Luo kanava', null, () => { const n = nimi.value.trim(); if (n.length < 2) return; luoKanava(n, kuvaus.value.trim()); T.kanavaNimi = ''; T.kanavaKuvaus = ''; T.dialogi = null; piirra(); });
+      const tila = () => { T.kanavaNimi = nimi.value; T.kanavaKuvaus = kuvaus.value; ok.disabled = nimi.value.trim().length < 2; };
+      nimi.addEventListener('input', tila); kuvaus.addEventListener('input', tila); tila();
+      r.append(peru, ok); d.append(nimi, kuvaus, r);
+    }
+    ov.appendChild(d); return ov;
   }
   function piirraViestit(p) {
     const lista = ketjuLista(), dj = djHuoneet();
     if (onDj(T.aktiivinen) && !(dj && dj.some(h => 'dj:' + h.id === T.aktiivinen))) T.aktiivinen = null;
-    if (T.aktiivinen != null && !onDj(T.aktiivinen) && !lista.some(k => k.id === T.aktiivinen)) lista.unshift({ id: T.aktiivinen, l: T.ketjut.get(T.aktiivinen) || [], viim: null });
+    if (onKanava(T.aktiivinen) && T.kanavat.tuettu && !T.kanavat.lista.has(+T.aktiivinen.slice(2))) T.aktiivinen = null;
+    if (typeof T.aktiivinen === 'number' && !lista.some(k => k.id === T.aktiivinen)) lista.unshift({ id: T.aktiivinen, l: T.ketjut.get(T.aktiivinen) || [], viim: null });
     if (T.aktiivinen == null && lista.length) T.aktiivinen = lista[0].id;
-    if (T.aktiivinen != null && !onDj(T.aktiivinen)) T.lukematta.delete(T.aktiivinen);
+    if (typeof T.aktiivinen === 'number') T.lukematta.delete(T.aktiivinen);
+    if (onKanava(T.aktiivinen)) { const k = T.kanavat.lista.get(+T.aktiivinen.slice(2)); if (k && k.lukematta) merkitseKanavaLuetuksi(k.id); }
     // sivupalkki vaihdetaan aina; oikea palsta vain jos se on eri asia (Datajakon kirjoituskenttä ei saa menettää fokusta saapuvista paketeista)
     const sivu = viestiSivu(lista, dj), vanha = p.querySelector(':scope > .km-side');
     if (vanha) vanha.replaceWith(sivu); else p.prepend(sivu);
@@ -1171,12 +1326,17 @@
       const id = T.aktiivinen.slice(3);
       if (!(oikeat.length === 1 && oikeat[0] === djPaikka)) { oikeat.forEach(e => e.remove()); p.appendChild(djPaikka); }
       upotaDj(djPaikka, 'chat:' + id, u => u.valitse(id));
+    } else if (onKanava(T.aktiivinen)) {
+      djPiiloon();
+      oikeat.forEach(e => e.remove());
+      p.appendChild(kanavaPaneeli(+T.aktiivinen.slice(2)));
     } else {
       djPiiloon();
       oikeat.forEach(e => e.remove());
       if (T.aktiivinen != null) p.appendChild(ketjuPaneeli(T.aktiivinen));
       else { const m = el('div', 'km-main'); m.appendChild(tyhja('Viestit näkyvät tässä, kun aloitat keskustelun.')); p.appendChild(m); }
     }
+    if (T.dialogi === 'uusiKanava' && !onKanava(T.aktiivinen)) p.appendChild(kanavaDialogi(0));
   }
   function ketjuPaneeli(id) {
     const f = henkilo(id), aito = id > 0, l = T.ketjut.get(id) || [], o = oma();
