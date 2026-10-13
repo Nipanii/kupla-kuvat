@@ -4,11 +4,11 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.1.0
+// @version      0.2.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/kupla-messenger.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/kupla-messenger.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
-// @description  Kaverit, yksityisviestit, maininnat ja Datajako yhden napin takana. Pelkkä client, ei palvelinmuutoksia.
+// @description  Kaverit & viestit (v3-ulkoasu), maininnat ja Datajako yhden napin takana. Pelkkä client, ei palvelinmuutoksia.
 // @kupla-oletus off
 // @author       re-lab
 // ==/UserScript==
@@ -16,6 +16,8 @@
  * MIKSI: Res 2026-10-13 07:27-07:40 "teetkö userscriptin siitä v3 messengeristä, lisätään siihen myös maininnat … saman napin
  *   taakse … ja paremmin luettavaks" · "datajaon ominaisuudet" (07:38: datajako PYSYY asukanavalla, tulee omaksi välilehdeksi) ·
  *   "ensin tosin userscript et voidaan tunnustella ja testaa sitä". Rakennusohje: re-lab tmp/messenger-us/RAKENNUS.md.
+ *   0.2.0: Res 08:11 "tyyli ei vastaa näitä v3 sketchejä" -> ulkoasu on robo/messenger-v3 -haaran oma (MessengerView.scss käännettynä,
+ *   valitsimet #km2-rajattuina, ikonit data-URI:na) ja rakenne views/*.tsx:n mukainen. MUOKKAA rakennus/osa1.js + osa2.js ja aja rakennus/kokoa.py, älä tätä tiedostoa.
  * MITEN: pelin React-tilaa ei saa ulkoa, joten skripti kääri clientin omat parserit (lukee jäsennetyt kentät heti parse():n jälkeen)
  *   ja lähettää clientin omilla paketeilla `conn.sendPacket(header, arvot)` (SocketConnection.ts:921). Uusia pakettimuotoja ei ole.
  * RAJAT: ennen skriptin latautumista tulleet yksityisviestit näkyvät vain pelin omassa ikkunassa. Viestit ovat vain muistissa
@@ -27,7 +29,7 @@
   const VW = window;
   if (VW.__kuplaMessenger) return; VW.__kuplaMessenger = true;
   // testiä varten uudelleenasennettava: käärityt parserit kutsuvat AINA viimeisintä käsittelijätaulua (VW.__km2K)
-  const VERSIO = '0.1.0';
+  const VERSIO = '0.2.0';
   // uudelleenasennus (testi) pysäyttää edellisen kopion ajastimet: vain uusin sukupolvi elää
   const SUKU = (VW.__km2Suku = (VW.__km2Suku || 0) + 1), elossa = () => VW.__km2Suku === SUKU;
   const ajoita = (f, ms) => { const h = setInterval(() => { if (!elossa()) return clearInterval(h); f(h); }, ms); return h; };
@@ -50,15 +52,18 @@
   const yhteys = () => { if (!conn || dv(conn, '_socket') && dv(conn, '_socket').readyState > 1) conn = etsiYhteys() || conn; return conn; };
   const laheta = (h, arvot) => { const c = yhteys(); if (!c || typeof c.sendPacket !== 'function') { loki('ei yhteyttä, ei lähetetty', h); return false; }
     return c.sendPacket(h, arvot) !== false; };
-  const oma = () => { const s = dv(RE(), '_sessionDataManager'); return { id: s ? s.userId : 0, nimi: s ? s.userName : '' }; };
+  const oma = () => { const s = dv(RE(), '_sessionDataManager'); return { id: s ? s.userId : 0, nimi: s ? s.userName : '', asu: s ? s.figure : '' }; };
 
   // ---------- tila (vain muistissa) ----------
   const T = { kaverit: new Map(), pyynnot: new Map(), ketjut: new Map(), lukematta: new Map(), maininnat: [], haku: null,
-    raja: 0, kaverilistaSaatu: 0, koukutettu: 0, aktiivinen: null, valilehti: 'viestit', auki: false };
+    raja: 0, kaverilistaSaatu: 0, koukutettu: 0, aktiivinen: null, valilehti: 'viestit', auki: false,
+    luonnos: new Map(), suljetut: new Set(), valitut: new Set(), pyydetyt: new Set(), suodatin: '', hakusana: '', hakuKaynnissa: false,
+    paikallaAuki: true, poissaAuki: true, dialogi: null, kutsuteksti: '', suhdeAuki: null };
   const kaveri = f => ({ id: f.id, nimi: f.name, paikalla: !!f.online, seurattava: !!f.followingAllowed, asu: f.figure || '', motto: f.motto || '', suhde: f.relationshipStatus || 0 });
   const nimiId = id => (T.kaverit.get(id) || {}).nimi || ('#' + id);
   function lisaaViesti(peer, v) {
     if (!T.ketjut.has(peer)) T.ketjut.set(peer, []);
+    T.suljetut.delete(peer);   // uusi viesti avaa suljetun keskustelun uudelleen
     const l = T.ketjut.get(peer); l.push(v); if (l.length > 300) l.splice(0, l.length - 300);
     if (!v.oma && !(T.auki && T.valilehti === 'viestit' && T.aktiivinen === peer)) T.lukematta.set(peer, (T.lukematta.get(peer) || 0) + 1);
   }
@@ -115,95 +120,876 @@
 
   // ---------- apurit ----------
   const el = (tag, cls, teksti, attr) => { const e = document.createElement(tag); if (cls) e.className = cls; if (teksti != null) e.textContent = teksti; if (attr) for (const k in attr) e.setAttribute(k, attr[k]); return e; };
-  const paa = asu => location.origin + '/avatarimage?figure=' + encodeURIComponent(asu || '') + '&headonly=1&size=l&direction=3&head_direction=3';   // size=s on 16x16, l 64x84 (mitattu 13.10.)
   const kaksi = n => String(n).padStart(2, '0');
   const klo = t => { const d = new Date(t); return kaksi(d.getHours()) + ':' + kaksi(d.getMinutes()); };
-  const paiva = t => { const d = new Date(t), n = new Date(); const ero = Math.round((new Date(n.toDateString()) - new Date(d.toDateString())) / 864e5);
+  const paivaNimi = t => { const d = new Date(t), n = new Date(); const ero = Math.round((new Date(n.toDateString()) - new Date(d.toDateString())) / 864e5);
     return ero === 0 ? 'Tänään' : ero === 1 ? 'Eilen' : d.getDate() + '.' + (d.getMonth() + 1) + '.' + d.getFullYear(); };
   const listaAika = t => { const d = new Date(t); return d.toDateString() === new Date().toDateString() ? klo(t) : d.getDate() + '.' + (d.getMonth() + 1) + '.'; };
-  const mainintaAika = s => { if (!s) return ''; const t = s > 1e11 ? s : s * 1000; return paiva(t) + ' ' + klo(t); };
+  const mainintaAika = s => { if (!s) return ''; const t = s > 1e11 ? s : s * 1000; return paivaNimi(t) + ' ' + klo(t); };
+  const nimiJarjestys = (a, b) => a.nimi.localeCompare(b.nimi, 'fi', { sensitivity: 'base' });
+  // pelin oma FaTimes-ristikuvake (react-icons), sama kuin pelin ikkunoiden sulkunapissa
+  const risti = cls => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 352 512'); s.setAttribute('fill', 'currentColor');
+    s.setAttribute('class', cls || 'km-x'); const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    p.setAttribute('d', 'M242.72 256l100.07-100.07c12.28-12.28 12.28-32.19 0-44.48l-22.24-22.24c-12.28-12.28-32.19-12.28-44.48 0L176 189.28 75.93 89.21c-12.28-12.28-32.19-12.28-44.48 0L9.21 111.45c-12.28 12.28-12.28 32.19 0 44.48L109.28 256 9.21 356.07c-12.28 12.28-12.28 32.19 0 44.48l22.24 22.24c12.28 12.28 32.2 12.28 44.48 0L176 322.72l100.07 100.07c12.28 12.28 32.2 12.28 44.48 0l22.24-22.24c12.28-12.28 12.28-32.19 0-44.48L242.72 256z');
+    s.appendChild(p); return s; };
+  const nappiEl = (cls, teksti, ikoni, fn) => { const b = el('button', 'km-btn' + (cls ? ' ' + cls : ''), null, { type: 'button' });
+    if (ikoni) b.appendChild(ikoni instanceof Node ? ikoni : el('span', 'km-icon ' + ikoni)); if (teksti) b.appendChild(document.createTextNode(teksti));
+    if (fn) b.onclick = e => { e.stopPropagation(); fn(e); }; return b; };
+  const ib = (ikoni, otsikko, fn) => { const b = el('button', 'km-ib', null, { type: 'button', title: otsikko, 'aria-label': otsikko });
+    b.appendChild(ikoni instanceof Node ? ikoni : el('span', 'km-icon ' + ikoni)); b.onclick = e => { e.stopPropagation(); fn(e); }; return b; };
+  const merkkiEl = (n, hiljaa) => n > 0 ? el('span', 'km-badge' + (hiljaa ? ' is-muted' : ''), n > 99 ? '99+' : String(n)) : null;
+  const tyhja = (teksti, toiminto, fn) => { const e = el('div', 'km-empty', teksti); if (toiminto) { e.appendChild(el('br')); const a = el('span', 'km-sec-action', toiminto, { role: 'button' }); a.onclick = fn; e.appendChild(a); } return e; };
 
-  // ---------- käyttöliittymä ----------
-  let juuri, nappi, runko, merkki, paneelit = {};
-  const VALILEHDET = [['viestit', 'Viestit'], ['kaverit', 'Kaverit'], ['pyynnot', 'Pyynnöt'], ['haku', 'Haku'], ['maininnat', 'Maininnat'], ['datajako', 'Datajako']];
-  const CSS = `
-#km2{position:fixed;z-index:470;width:460px;height:560px;min-width:340px;min-height:360px;resize:both;overflow:hidden;display:flex;flex-direction:column;
-  background:#141b26;color:#eef3f8;border:1px solid #3b4a5e;border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.55);
-  font:14px/1.45 system-ui,'Segoe UI',Roboto,Arial,sans-serif;}
-#km2 *{box-sizing:border-box}
-#km2 .km2-ots{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#1d2734;border-bottom:1px solid #3b4a5e;cursor:move;user-select:none}
-#km2 .km2-ots b{flex:1;font-size:15px}
-#km2 button{font:inherit;color:#eef3f8;background:#2a3a4e;border:1px solid #4a5d75;border-radius:6px;padding:4px 10px;cursor:pointer}
-#km2 button:hover{background:#34465c}
-#km2 button.km2-ens{background:#1f7a8c;border-color:#2a9cb2}
-#km2 button.km2-vaara{background:#5a2630;border-color:#8a3a48}
-#km2 .km2-x{padding:2px 9px}
-#km2 .km2-tabit{display:flex;gap:1px;padding:6px 4px 0;background:#18212d;border-bottom:1px solid #3b4a5e;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}
-#km2 .km2-tab{flex:1 0 auto;border:0;border-radius:6px 6px 0 0;background:transparent;color:#b9c6d4;padding:6px 7px;white-space:nowrap;font-size:13.5px}
-#km2 .km2-tab.on{background:#141b26;color:#fff;font-weight:600}
-#km2 .km2-luku{display:inline-block;min-width:19px;padding:0 5px;margin-left:4px;border-radius:10px;background:#d64545;color:#fff;font-size:12px;font-weight:700;line-height:19px;text-align:center}
-#km2 .km2-luku.hiljaa{background:#4a5d75}
-#km2 .km2-runko{flex:1;min-height:0;position:relative}
-#km2 .km2-pan{position:absolute;inset:0;overflow:auto;padding:8px}
-#km2 .km2-pan.piilo{display:none}
-#km2 .km2-rivi{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:8px;cursor:pointer}
-#km2 .km2-rivi:hover{background:#1e2836}
-#km2 .km2-rivi.valittu{background:#233246}
-#km2 .km2-pää{width:40px;height:40px;flex:none;border-radius:50%;background:#26313f;overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center;color:#cfe0f0;font-weight:700;font-size:16px}
-#km2 .km2-pää img{position:absolute;left:50%;top:50%;width:44px;height:auto;transform:translate(-50%,-50%)}
-#km2 .km2-pää.paikalla{box-shadow:0 0 0 2px #3fbf6f}
-#km2 .km2-tiedot{flex:1;min-width:0}
-#km2 .km2-nimi{font-weight:600}
-#km2 .km2-pieni{color:#b9c6d4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#km2 .km2-aika{color:#b9c6d4;font-size:13px;flex:none}
-#km2 .km2-osio{margin:10px 4px 4px;color:#9fb0c3;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
-#km2 .km2-tyhja{padding:24px 12px;color:#b9c6d4;text-align:center}
-#km2 .km2-kentta{width:100%;padding:7px 10px;border-radius:7px;border:1px solid #4a5d75;background:#0f151e;color:#eef3f8;font:inherit}
-#km2 .km2-kentta:focus{outline:2px solid #2a9cb2;border-color:#2a9cb2}
-#km2 .km2-viestit{display:flex;flex-direction:column;height:100%}
-#km2 .km2-ketjuots{display:flex;align-items:center;gap:8px;padding:4px 2px 8px;border-bottom:1px solid #2c3949}
-#km2 .km2-ketju{flex:1;overflow:auto;padding:8px 2px}
-#km2 .km2-paivays{text-align:center;color:#9fb0c3;font-size:13px;margin:10px 0 6px}
-#km2 .km2-kupla{max-width:80%;margin:3px 0;padding:7px 11px;border-radius:12px;background:#243042;word-wrap:break-word;white-space:pre-wrap}
-#km2 .km2-kupla.oma{align-self:flex-end;background:#1f5f6e}
-#km2 .km2-kupla .km2-klo{display:block;font-size:12px;color:#c3d0dd;margin-top:2px;text-align:right}
-#km2 .km2-kupla.kutsu{background:#3a3220}
-#km2 .km2-kirjoita{display:flex;gap:6px;padding-top:8px;border-top:1px solid #2c3949}
-#km2 .km2-laskuri{font-size:12px;color:#b9c6d4;align-self:center;min-width:44px;text-align:right}
-#km2 .km2-napit{display:flex;gap:6px;flex-wrap:wrap}
-#km2 .km2-maininta{padding:9px 8px;border-radius:8px;border-left:3px solid transparent}
-#km2 .km2-maininta.uusi{border-left-color:#d64545;background:#1b2431}
-#km2 .km2-pan.dj{padding:0}
-#km2 .dj-ikkuna>.nitro-card{height:100%}
-#km2 .dj-ikkuna>.nitro-card>.nitro-card-header,#km2 .dj-kahva{display:none!important}
+  // Avatar: palvelimen oma kuvapalvelu (headonly, size=l = 64x84; size=s on vain 16x16, mitattu 13.10.).
+  // Tuntematon oma vaateosa voi palauttaa 7x1-virhekuvan -> nimen alkukirjain. Tulos muistetaan, ettei uudelleenpiirto välky.
+  // Kuvapalvelu rajaa kuvan sisällön mukaan (64x84 tavallinen pää, 90x136 hatun ja pitkien hiusten kanssa, mitattu 13.10.), joten
+  // hattu (ha) ja pääkoriste (he) jätetään pois ympyrästä ja kuva ankkuroidaan yläreunasta: hiusten yläreuna on pään yläreuna.
+  const KUVATILA = new Map();
+  const ilmanHattua = asu => String(asu).split('.').filter(o => !/^(ha|he)-/.test(o)).join('.');
+  const paaUrl = (asu, suunta) => location.origin + '/avatarimage?figure=' + encodeURIComponent(ilmanHattua(asu)) + '&headonly=1&size=l&direction=' + suunta + '&head_direction=' + suunta;
+  function avatar(asu, o) {
+    o = o || {};
+    const w = el('div', 'km-avw'), a = el('div', 'km-av' + (o.iso ? ' is-large' : '')), k = el('div', 'avatar-image km-imager');
+    a.appendChild(k); w.appendChild(a);
+    if (o.paikalla !== undefined) w.appendChild(el('span', 'km-dot' + (o.paikalla ? ' is-online' : '')));
+    const alku = () => { k.classList.add('km-alku'); k.textContent = (o.nimi || '?').slice(0, 1).toUpperCase(); };
+    if (!asu) { alku(); return w; }
+    const url = paaUrl(asu, o.suunta || 2), tila = KUVATILA.get(url);
+    if (tila && tila.w) { const sk = o.iso ? 0.94 : 0.78;
+      k.style.setProperty('background-image', 'url("' + url + '")', 'important');
+      k.style.setProperty('background-size', Math.round(tila.w * sk) + 'px auto', 'important');
+      k.style.setProperty('background-position', '50% ' + (o.iso ? -14 : -11) + 'px', 'important'); }
+    else if (tila === 'virhe') alku();
+    else if (!tila) { KUVATILA.set(url, 'lataa'); const im = new Image();
+      im.onload = () => { KUVATILA.set(url, im.naturalWidth >= 20 ? { w: im.naturalWidth, h: im.naturalHeight } : 'virhe'); paivitaPian(); };
+      im.onerror = () => { KUVATILA.set(url, 'virhe'); paivitaPian(); }; im.src = url; }
+    return w;
+  }
+
+  // ---------- käyttöliittymä: robo/messenger-v3 -haaran ulkoasu (MessengerView.scss + views/*.tsx), Resin pyynnöstä 13.10. 08:11 ----------
+  let juuri, kortti, tabit, nappi, nappiMerkki; const paneelit = {};
+  const VALILEHDET = [
+    { k: 'viestit', ikoni: 'chat', nimi: 'Viestit' },
+    { k: 'kaverit', ikoni: 'friends', nimi: 'Kaverit' },
+    { k: 'pyynnot', ikoni: 'requests', nimi: 'Pyynnöt' },
+    { k: 'haku', ikoni: 'search', nimi: 'Haku' },
+    { k: 'maininnat', ikoni: 'at', nimi: 'Maininnat' },
+    { k: 'datajako', ikoni: 'start-chat', nimi: 'Datajako' },
+  ];
+  const IKONIT = {"chat": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABUAAAAVCAYAAACpF6WWAAAAh0lEQVR4Ad3PsQmAMBQGYUdxAidwBGvHcACncA07B3AetxAlhUeKkCccNv5wTRI+tBG7iElsXE8CtxjtBKyxfjnygA0WoAIL0Bjrpi31Gq1hgM+AKyiHCQQjh+agR9th/gRN/QIFDkH7pQQoUTBAJn4/xxTKvUcBeBOgrISCld4FKAOh0oL7G0g4Bqt8Qk8aAAAAAElFTkSuQmCC", "friends": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACMAAAAhCAMAAABkz+JgAAABF1BMVEX///9rlqhslqgkNTwlNT1rlagkNDwsQkosQkt3WywAAACeMS+vlnlZSDRZSDWWeViWelhaSDUkNTxgTjhaSTUlNT1uQh1vQh2wl3rJkV6wlnmdMS9JKxMsQkphTjmRVybJkl5KPCzKkl6McFKdMC6VeVihdEslNTxhTzlgTjlvKSgkNDxvQx5JLBNvKimSWCZIKxKUMC6RdVUtQkuRWCZ4VzgsQkuhdUtwKimWdDeVMC6RdlVkUDuwl3mLcFJQQS9LPSyhdErKkl+WczdjUDqVMS9wW0J5VzmQdVSRVyWVeVeQdVVPQC9QQC+McVKdMS5vWkFvKihkUTt3Wyx3XC2skHKVMC9FOClfTTl2WyxLPCyWdDhfTTgVKrGnAAAACnRSTlMAAAAAAAAAAAAAc6AYaAAAAoZJREFUeF5909WS21AQBFDLtJu+YgYz0zIzhpnx/78jPVd5SVWyUyq/3OOeliVX/hrIVB4a4Droz/oPKcz6nf7sx/x69n8EEkGdToAKyvkXmc14zXMgSVZbyf5Wqap6DANcFQSzIM3TCwoa+ehuQUytVq8B8NEPOh3TNNMcyWo/6VJoRWTU1tcQHbYjBJ3AzNPcNGlIiJgVJwkqRh2I2r5PEyDnuO/0queCVkBMU0Xkt/2pv0SAJ2mep0jRohESI8uwYg78dhT5ke8D45SraDZWMVHcJekdQcweCXdFyF8wR/q0WnFLFvWybPKUneHvkSypiMwL08xzmg204hhHBxkGYpZtEi5j0GfIjQHbGzhAggwZL53DYdJ0GQE5UuawNCYQMMgm2mixJIO1CxN6tnEzyFg4w+RWTMRzWQUvPHvJZWaOeyIRPZa+0YYhTJkidJyzXcg4YwA8H0DXqTQQSWNZ5brO7v35h3vXdeXwNhv0qGiq0D/hlLtonjmOg7GFxRciPcdEBo3PKBo5dx3HJlmcPpZGPSwU9DM9lD4R4Lq8LDu0sVkUOzs6RRU01XodviCkADzbs4eX/LZSp4vNxUgVSkyt1gSiaIk0xSvbuhxaNo4LpXaUnjJHXkQimCleD9/YthdiU6kRSqL71JrNerMGH3mOc8sKw+EQi6KAGqm3qih0TrVR5awBuYkrK7wc6qoKPJegEU3DaAhbh/S5Yl+EHk0BikIVI6VzDMnBkn1yAJbFzu+V0oauNIwxpLNjmrBDz8IvuXf2KUVGowfyPo9d2J5nY65NeU8fMZA+sg36hcbcsy2POQQQ8enuBPK8KIwG+P9Z4us327NkVw8y33+e3OFRpfIbFMJVtcchyzUAAAAASUVORK5CYII=", "requests": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAB8AAAAiCAMAAACQlPJ4AAAAb1BMVEU+TlY/Tle7zdc+TVYpWmQYMzlhTzkpWmVgTjkYMzq6zda6zdc/TlZhTjkXMzkoWmRgTjgoWWQ4fIoAAAAXMjkTKS0+Tla7zde6zNY/TlYTKS66zde6zdY+TVY/TlcAAAB00k4UKS5z0U500U4TKC2kacgTAAAAFXRSTlMAAAAAAAAAAAAAAAAAAAAAAAAAAABzkhMSAAAB+ElEQVR4XjVUCbajMAxzgO5/n3HWBWjn/mccyeG7pSmWZcmmr3Ji3E4fysi4cIfMx+n2F+mbXMU5caq9e9976l71H+qyMC8neRcnswI0tPmOE7VdgTr5I2dRAcw0MJzJszaNgh+55paZJq2ROd6IjIofOauxmgea0tHcm1JXuQjIZB/5RhNHeODfoiz0iVAzaZM4DCn5I0Hu4YKM4RG4ju/ME+Ar/fo0fvOeeQJHa+gY3nxT2YF66NOZWTV/NcSAI6mo2WNtO7zhCCHGWIFk2cE0Hjv4ldFDDaXWig6/u23HFOu2vVYgIfDDHzilh/y6vV4r0QIDoWfOP9qbYeLbCoRRaxbMT/fcRTLt7fm0sxaIqANuw9I9tJ8brtdrQ48KPvGzetrDLXDCcAgNTBCqzt/AbauGPwGOWEMp0fhfTumw1mi6KOHB/kP/HTg3ZOOGdXAr5DBFNlyUqwuBjsDn/LGyIijmu9rPt6cS4Sis9M7Ri83vFjnP4sxCCSUOD+zE9VXyzyLi+JBsI9HmLlYBfVkGLgqL5IxHE0etOtN3wN+y5lgSs1xMiSzL8xtwkRkWp7uC1emb7gt1VOZFvozuHtNO0T4eXCykTyKcn3w3PSalqgfPSnSf7gN3grg/JhQEWyJb6zQBx/4uy+fFYrksed/38S9xOeLzPyKsWw7cE9IyAAAAAElFTkSuQmCC", "search": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAwAAAAMCAYAAABWdVznAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABSSURBVChTrZDRDgAQDAPL//8zIbY0TfHAvSzmOpkCT1uVma4LODkoGmCZ77JfV1V0UJ53gS3fArp4np9+KcTRc6HpRoAF92qi047ygJe+ygDQASfpCxL/V9w3AAAAAElFTkSuQmCC", "follow": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAPAgMAAACQHae8AAAACVBMVEX///8AAAAb2AAnw6rbAAAAAXRSTlMAQObYZgAAADtJREFUeF5NyKERACEQxdCYK+H6WYNfwe8ABPRDE1QJCwbzJhPgNzA5eFA2aps+D8Oi7D6qMkiCFHwvC3JUEFNhwuyeAAAAAElFTkSuQmCC", "profile": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAMBAMAAACZySCyAAAAJ1BMVEX///+RkZH09PT////rwoHrwoDswoDqwoDYk2HYlGHrwYDpwX/Zk2HDsc8wAAAAAXRSTlMAQObYZgAAAFFJREFUeF5VzLENgDAMBEBHWYDkkajxBFhMkIIRWIEi2zANKzBWHDsFfPE6ffEUkmUi7Bb5YDngeG9IgqKWsZyPLoo8X5mZV+r9h/gzKPrh1gBQjQ9ajffB6wAAAABJRU5ErkJggg==", "start-chat": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAOAgMAAABbQXQZAAAACVBMVEX///////8AAACO9MPsAAAAAXRSTlMAQObYZgAAADdJREFUeF51yqENACAMRcGnmQJTwkKfMANTsAS+BtMpCUFjTh0pwjGps6T25ZW0h4NNoADUS4YDzx0Ql4GNbg8AAAAASUVORK5CYII=", "add": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABkAAAAZBAMAAAA2x5hQAAAAElBMVEX///8AAAB3v0Nloznk4uLS0NCoLOgPAAAAAXRSTlMAQObYZgAAAF9JREFUeF590NEJwCAMBuF2Aw/qAlnBCQpdwId//1WKGlSK9d4+JIR4bDvxQlGUl8uTHk+h6YZrklmXlM2itFIGM4guq62VamtBSuBS09hXpv4EkwRyjWvL8fQ+/7LtBUboLihV41V4AAAAAElFTkSuQmCC", "invite": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABMAAAANAgMAAAA24r20AAAACVBMVEX///8AAAD///9+749PAAAAAXRSTlMAQObYZgAAAEJJREFUeF4lzCEOgFAMg+Ei3tHwkICZn9l9OMIE/ynpgvnSLO0kHTIrx6jTkWpH6rlUxG37HQOb4HvAPs3eZvV/MB/g3BMN7OqiyQAAAABJRU5ErkJggg==", "remove": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA0AAAANCAYAAABy6+R8AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAACxMAAAsTAQCanBgAAABJSURBVChTY2TADv5DaRDAUIMsgKwQFwCrh2kiRgMMwC0CaSKkEa6GLJvI8hMTmIkKYAah03CATRNBMMg1kRV66CGDTyNULQMDACkBCxHze4N3AAAAAElFTkSuQmCC", "home": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA0AAAALAQMAAACefJUiAAAABlBMVEX///8AAABVwtN+AAAAAXRSTlMAQObYZgAAACtJREFUeF49wrENABAQAMCLRmkEa+iMxmhG+RGUOjrJSWTKVJcexnaPFt8DgvAKXXvwnfgAAAAASUVORK5CYII="};
+  const CSS = `.badge.km-badge,
+.km-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 16px;
+  padding: 0 5px;
+  border: 0 !important;
+  border-radius: 8px;
+  background: #e5484d !important;
+  color: #fff;
+  font-size: 10px;
+  font-weight: bold;
+  line-height: 16px;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55);
+}
+.badge.km-badge.is-muted,
+.km-badge.is-muted {
+  background: var(--colors-secondary, #267f93) !important;
+}
+.km-badge.km-toolbar-count {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  z-index: 1;
+  pointer-events: none;
+}
+#km2 .km-dot {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2.5px solid #0f1724;
+  background: #4a5568;
+}
+#km2 .km-dot.is-online {
+  background: #3ecf5a;
+}
+#km2 .nitro-card.kupla-messenger {
+  width: 720px;
+  height: 540px;
+  min-width: 560px;
+  min-height: 400px;
+  max-width: 100vw;
+  max-height: 100vh;
+  background: #0b1018;
+  border: 1px solid #2c4566;
+  border-radius: 10px !important;
+  box-shadow: 0 0 0 1px #000, 0 18px 50px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  color: #dce6f2;
+  font-size: 13px;
+}
+#km2 .nitro-card.kupla-messenger .nitro-card-header {
+  min-height: 40px;
+  max-height: 40px;
+  padding: 0 12px;
+  background: linear-gradient(#17283d, #101b2a);
+  border-bottom: 1px solid #22364f;
+}
+#km2 .nitro-card.kupla-messenger .nitro-card-header .nitro-card-header-text {
+  font-size: 14px;
+  letter-spacing: 0.01em;
+}
+#km2 .nitro-card.kupla-messenger button {
+  font-family: inherit;
+}
+#km2 .nitro-card.kupla-messenger .km-icon {
+  display: inline-block;
+  flex: none;
+  background: center/contain no-repeat;
+  image-rendering: pixelated;
+}
+#km2 .nitro-card.kupla-messenger .km-icon.chat {
+  width: 17px;
+  height: 16px;
+  background-image: url("__IKONI_chat__");
+}
+#km2 .nitro-card.kupla-messenger .km-icon.friends {
+  width: 18px;
+  height: 16px;
+  background-image: url("__IKONI_friends__");
+}
+#km2 .nitro-card.kupla-messenger .km-icon.requests {
+  width: 18px;
+  height: 16px;
+  background-image: url("__IKONI_requests__");
+}
+#km2 .nitro-card.kupla-messenger .km-icon.search {
+  width: 13px;
+  height: 13px;
+  background-image: url("__IKONI_search__");
+}
+#km2 .nitro-card.kupla-messenger .km-icon.follow {
+  width: 16px;
+  height: 14px;
+  background-image: url("__IKONI_follow__");
+}
+#km2 .nitro-card.kupla-messenger .km-icon.profile {
+  width: 14px;
+  height: 14px;
+  background-image: url("__IKONI_profile__");
+}
+#km2 .nitro-card.kupla-messenger .km-icon.start-chat {
+  width: 16px;
+  height: 14px;
+  background-image: url("__IKONI_start-chat__");
+}
+#km2 .nitro-card.kupla-messenger .km-icon.add {
+  width: 16px;
+  height: 15px;
+  background-image: url("__IKONI_add__");
+}
+#km2 .nitro-card.kupla-messenger .km-icon.invite {
+  width: 19px;
+  height: 13px;
+  background-image: url("__IKONI_invite__");
+}
+#km2 .nitro-card.kupla-messenger .km-icon.home {
+  width: 13px;
+  height: 11px;
+  background-image: url("__IKONI_home__");
+}
+#km2 .nitro-card.kupla-messenger .km-icon.remove {
+  width: 13px;
+  height: 13px;
+  background-image: url("__IKONI_remove__");
+}
+#km2 .km-tabs {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  padding: 8px 12px;
+  background: #0f1724;
+  border-bottom: 1px solid #22364f;
+}
+#km2 .km-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #7f92aa;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+#km2 .km-tab:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: #dce6f2;
+}
+#km2 .km-tab.is-active {
+  background: #18263a;
+  color: #dce6f2;
+  box-shadow: inset 0 0 0 1px #2c4566;
+}
+#km2 .km-tab .km-tab-meta {
+  color: #7f92aa;
+  font-weight: normal;
+}
+#km2 .km-body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+#km2 .km-pane {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+#km2 .km-pane.is-hidden {
+  display: none;
+}
+#km2 .km-side {
+  display: flex;
+  flex-direction: column;
+  width: 240px;
+  flex: none;
+  min-height: 0;
+  background: #0f1724;
+  border-right: 1px solid #22364f;
+}
+#km2 .km-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 8px;
+}
+#km2 .km-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+#km2 .km-scroll::-webkit-scrollbar-thumb {
+  background: #2c4566;
+  border-radius: 4px;
+}
+#km2 .km-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+#km2 .km-sec {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 14px 4px;
+  color: #7f92aa;
+  font-size: 10.5px;
+  font-weight: bold;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+#km2 .km-sec.is-toggle {
+  width: calc(100% - 28px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+#km2 .km-sec.is-toggle:hover {
+  color: #dce6f2;
+}
+#km2 .km-sec .km-caret {
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  transition: transform 0.12s;
+}
+#km2 .km-sec .km-caret.is-closed {
+  transform: rotate(-90deg);
+}
+#km2 .km-sec .km-sec-action {
+  margin-left: auto;
+  color: var(--colors-secondary, #267f93);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  cursor: pointer;
+}
+#km2 .km-sec .km-sec-action:hover {
+  text-decoration: underline;
+}
+#km2 .km-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 36px;
+  margin: 1px 8px;
+  padding: 0 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  user-select: none;
+}
+#km2 .km-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+#km2 .km-row.is-active,
+#km2 .km-row.is-selected {
+  background: linear-gradient(90deg, rgba(38, 127, 147, 0.25), rgba(38, 127, 147, 0.06));
+  box-shadow: inset 2px 0 0 var(--colors-secondary, #267f93);
+}
+#km2 .km-row.is-tall {
+  height: 44px;
+}
+#km2 .km-row.is-offline .km-name {
+  color: #7f92aa;
+}
+#km2 .km-row.is-offline .km-av {
+  filter: grayscale(0.8) brightness(0.7);
+}
+#km2 .km-avw {
+  position: relative;
+  flex: none;
+}
+#km2 .km-av {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #1d2e44;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+#km2 .km-av .avatar-image {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  transform: none !important;
+  background-size: auto !important;
+  background-repeat: no-repeat !important;
+  background-position: 50% -36px !important;
+  image-rendering: pixelated;
+}
+#km2 .km-av.is-large {
+  width: 44px;
+  height: 44px;
+}
+#km2 .km-av.is-large .avatar-image {
+  background-position: 50% -32px !important;
+}
+#km2 .km-nm {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+#km2 .km-nm .km-name,
+#km2 .km-nm small {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+#km2 .km-nm small {
+  color: #7f92aa;
+  font-size: 11px;
+}
+#km2 .km-row-meta {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  min-width: 32px;
+}
+#km2 .km-row-meta time {
+  color: #7f92aa;
+  font-size: 10.5px;
+  line-height: 12px;
+}
+#km2 .km-row-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+#km2 .km-ib {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #7f92aa;
+  cursor: pointer;
+}
+#km2 .km-ib:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #dce6f2;
+}
+#km2 .km-ib:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+#km2 .km-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  flex: none;
+  border: 0;
+  border-radius: 7px;
+  background: #18263a;
+  box-shadow: inset 0 0 0 1px #2c4566;
+  color: #dce6f2;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+#km2 .km-btn:hover {
+  background: #1f324c;
+}
+#km2 .km-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+#km2 .km-btn.is-danger {
+  background: rgba(229, 72, 77, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(229, 72, 77, 0.45);
+  color: #ff9a9d;
+}
+#km2 .km-btn.is-danger:hover {
+  background: rgba(229, 72, 77, 0.24);
+}
+#km2 .km-btn.is-primary {
+  background: linear-gradient(#18b842, #0e8a2c);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.19);
+  color: #fff;
+  font-weight: bold;
+}
+#km2 .km-btn.is-primary:hover {
+  filter: brightness(1.1);
+}
+#km2 .km-btn.is-square {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
+}
+#km2 .km-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  margin: 10px;
+  padding: 0 10px;
+  flex: none;
+  border: 1px solid #22364f;
+  border-radius: 7px;
+  background: #070b11;
+}
+#km2 .km-search:focus-within {
+  border-color: #2c4566;
+}
+#km2 .km-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #dce6f2;
+  font-size: 13px;
+}
+#km2 .km-search input::placeholder {
+  color: #7f92aa;
+}
+#km2 .km-empty {
+  margin: 18px 16px;
+  color: #7f92aa;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+}
+#km2 .km-empty.is-inline {
+  margin: 4px 22px 8px;
+  text-align: left;
+}
+#km2 .km-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: #0b1018;
+}
+#km2 .km-mh {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 52px;
+  padding: 0 14px;
+  flex: none;
+  border-bottom: 1px solid #22364f;
+}
+#km2 .km-mh .km-mh-title {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+#km2 .km-mh .km-mh-title b {
+  overflow: hidden;
+  font-size: 15px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+#km2 .km-mh .km-mh-title span {
+  color: #7f92aa;
+  font-size: 12px;
+}
+#km2 .km-mh .km-mh-actions {
+  display: flex;
+  gap: 6px;
+}
+#km2 .km-msgs {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  padding: 10px 16px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+#km2 .km-msgs::-webkit-scrollbar {
+  width: 8px;
+}
+#km2 .km-msgs::-webkit-scrollbar-thumb {
+  background: #2c4566;
+  border-radius: 4px;
+}
+#km2 .km-sys {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0 6px;
+  padding: 8px 12px;
+  border: 1px solid rgba(19, 163, 56, 0.33);
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgba(19, 163, 56, 0.13), rgba(19, 163, 56, 0.04));
+  font-size: 12.5px;
+}
+#km2 .km-sys.is-notice {
+  border-color: #22364f;
+  background: #131e2e;
+  color: #7f92aa;
+  font-size: 12px;
+}
+#km2 .km-sys.is-invite {
+  align-self: flex-start;
+  max-width: 100%;
+  border-color: #2c4566;
+  background: #18263a;
+  color: #dce6f2;
+}
+#km2 .km-sys .km-sys-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+#km2 .km-day {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+  color: #7f92aa;
+  font-size: 11px;
+}
+#km2 .km-day::before,
+#km2 .km-day::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #22364f;
+}
+#km2 .km-m {
+  display: flex;
+  gap: 11px;
+  padding: 6px;
+  border-radius: 8px;
+}
+#km2 .km-m:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+#km2 .km-m .km-m-body {
+  flex: 1;
+  min-width: 0;
+}
+#km2 .km-m .km-who {
+  font-size: 13px;
+  font-weight: bold;
+}
+#km2 .km-m .km-who .km-ts {
+  margin-left: 7px;
+  color: #7f92aa;
+  font-size: 11px;
+  font-weight: normal;
+}
+#km2 .km-m.is-own .km-who > span:first-child {
+  color: #62c1d6;
+}
+#km2 .km-m .km-txt {
+  margin-top: 2px;
+  color: #c9d6e5;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+#km2 .km-inp {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  margin: 6px 14px 14px;
+  padding: 0 6px 0 12px;
+  flex: none;
+  border: 1px solid #2c4566;
+  border-radius: 9px;
+  background: #070b11;
+}
+#km2 .km-inp input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #dce6f2;
+  font-size: 13px;
+}
+#km2 .km-inp input::placeholder {
+  color: #7f92aa;
+}
+#km2 .km-inp .km-counter {
+  flex: none;
+  color: #7f92aa;
+  font-size: 11px;
+}
+#km2 .km-inp .km-counter.is-full {
+  color: #ff9a9d;
+  font-weight: bold;
+}
+#km2 .km-inp .km-btn.is-primary {
+  height: 30px;
+  padding: 0 14px;
+}
+#km2 .km-col {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: #0f1724;
+}
+#km2 .km-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 12px;
+  flex: none;
+}
+#km2 .km-toolbar .km-search {
+  flex: 1;
+  margin-right: 0;
+}
+#km2 .km-toolbar .km-toolbar-meta {
+  flex: none;
+  color: #7f92aa;
+  font-size: 12px;
+}
+#km2 .km-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  flex: none;
+  border-top: 1px solid #22364f;
+  background: #0f1724;
+}
+#km2 .km-footer .km-footer-spacer {
+  flex: 1;
+}
+#km2 .km-check {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px #2c4566;
+  background: #070b11;
+}
+#km2 .km-check.is-on {
+  background: var(--colors-secondary, #267f93);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+}
+#km2 .km-rel {
+  position: absolute;
+  top: 32px;
+  right: 8px;
+  z-index: 5;
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 8px;
+  background: #131e2e;
+  box-shadow: 0 0 0 1px #2c4566, 0 8px 20px rgba(0, 0, 0, 0.6);
+}
+#km2 .km-rel-icon {
+  display: inline-block;
+}
+#km2 .km-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(5, 8, 12, 0.7);
+}
+#km2 .km-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 340px;
+  max-width: 100%;
+  max-height: 100%;
+  padding: 14px;
+  border-radius: 10px;
+  background: #131e2e;
+  box-shadow: 0 0 0 1px #2c4566, 0 12px 32px rgba(0, 0, 0, 0.7);
+}
+#km2 .km-dialog h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: bold;
+}
+#km2 .km-dialog p {
+  margin: 0;
+  color: #7f92aa;
+  font-size: 12px;
+  line-height: 1.45;
+}
+#km2 .km-dialog .km-dialog-list {
+  max-height: 120px;
+  overflow-y: auto;
+  color: #dce6f2;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+#km2 .km-dialog textarea {
+  min-height: 70px;
+  resize: vertical;
+  padding: 8px 10px;
+  border: 1px solid #2c4566;
+  border-radius: 7px;
+  outline: 0;
+  background: #070b11;
+  color: #dce6f2;
+  font-size: 13px;
+}
+#km2 .km-dialog .km-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+@media (max-width: 600px) {
+#km2 .nitro-card.kupla-messenger {
+    width: 100vw;
+    min-width: 0;
+    height: 80vh;
+    min-height: 0;
+  }
+#km2 .km-side {
+    width: 40%;
+    min-width: 140px;
+  }
+#km2 .km-tab {
+    padding: 0 8px;
+    gap: 5px;
+  }
+#km2 .km-mh {
+    gap: 6px;
+    padding: 0 8px;
+  }
+
+}
+
+
+#km2{position:fixed;z-index:470}
+#km2 .nitro-card.kupla-messenger{resize:both;overflow:hidden}
+#km2 .nitro-card.kupla-messenger .nitro-card-header{cursor:move;user-select:none}
+#km2 .nitro-card.kupla-messenger .km-icon.at{width:auto;height:16px;line-height:16px;font-weight:bold;font-size:14px;color:#62c1d6;background:none}
+#km2 .nitro-card.kupla-messenger .km-icon.at::before{content:"@"}
+#km2 .km-x{width:10px;height:12px}
+#km2 .km-av .avatar-image.km-alku{display:flex;align-items:center;justify-content:center;color:#9fb3c8;font-weight:bold;font-size:15px;background:none!important}
+#km2 .km-row.km-mrow{height:auto;min-height:44px;padding:7px 8px;align-items:flex-start}
+#km2 .km-row.km-mrow .km-nm{line-height:1.3}
+#km2 .km-row.km-mrow .km-txt{margin-top:3px;color:#c9d6e5;line-height:1.4;white-space:normal;overflow-wrap:anywhere}
+#km2 .km-row.km-mrow .km-row-actions{align-self:center}
+#km2 .km-sec .km-sec-action + .km-sec-action{margin-left:12px}
+#km2 .km-pane > .dj-ikkuna{flex:1;min-width:0;min-height:0;display:flex!important;flex-direction:column}
+#km2 .dj-ikkuna > .nitro-card{flex:1;min-height:0;height:100%;border:0!important;border-radius:0!important;box-shadow:none!important}
+#km2 .dj-ikkuna > .nitro-card > .nitro-card-header,#km2 .dj-kahva{display:none!important}
 #km2 .dj-ikkuna .content-area{height:auto!important;flex:1;min-height:0}
-.km2-nappi .km2-toolbar-luku{position:absolute;top:-4px;right:-6px;min-width:17px;padding:0 5px;border-radius:9px;background:#d64545;color:#fff;font:700 11px/17px system-ui,Arial,sans-serif;text-align:center;pointer-events:none}
+.km2-nappi .icon-message{position:relative}
 `;
+
   function rakennaUI() {
     if (juuri) return;
-    const st = el('style'); st.id = 'km2-tyyli'; st.textContent = CSS; document.head.appendChild(st);
-    juuri = el('div'); juuri.id = 'km2'; juuri.style.display = 'none';
+    const st = el('style'); st.id = 'km2-tyyli'; st.textContent = CSS.replace(/__IKONI_([a-z-]+)__/g, (_, k) => IKONIT[k] || ''); document.head.appendChild(st);
+    juuri = el('div', 'position-absolute draggable-window'); juuri.id = 'km2'; juuri.style.display = 'none';
     let paikka = null; try { paikka = JSON.parse(localStorage.getItem('km2.paikka') || 'null'); } catch (e) {}
-    juuri.style.left = (paikka && paikka.x != null ? paikka.x : Math.max(10, innerWidth - 490)) + 'px';
-    juuri.style.top = (paikka && paikka.y != null ? paikka.y : 70) + 'px';
-    if (paikka && paikka.w) { juuri.style.width = paikka.w + 'px'; juuri.style.height = paikka.h + 'px'; }
-    const ots = el('div', 'km2-ots'); ots.appendChild(el('b', null, 'Viestit ja kaverit'));
-    const sulje = el('button', 'km2-x', '✕', { title: 'Sulje' }); sulje.onclick = () => avaa(false); ots.appendChild(sulje);
-    const tabit = el('div', 'km2-tabit');
-    for (const [k, n] of VALILEHDET) { const b = el('button', 'km2-tab', n); b.dataset.k = k; b.onclick = () => { T.valilehti = k; if (k === 'viestit' && T.aktiivinen != null) T.lukematta.delete(T.aktiivinen); piirra(); }; tabit.appendChild(b); }
-    runko = el('div', 'km2-runko');
-    for (const [k] of VALILEHDET) { paneelit[k] = el('div', 'km2-pan piilo'); runko.appendChild(paneelit[k]); }
-    juuri.append(ots, tabit, runko); document.body.appendChild(juuri);
+    juuri.style.left = (paikka && paikka.x != null ? paikka.x : Math.max(10, Math.round((innerWidth - 720) / 2))) + 'px';
+    juuri.style.top = (paikka && paikka.y != null ? paikka.y : 60) + 'px';
+    kortti = el('div', 'd-flex flex-column nitro-card rounded theme-primary kupla-messenger');
+    if (paikka && paikka.w) { kortti.style.width = paikka.w + 'px'; kortti.style.height = paikka.h + 'px'; }
+    const ots = el('div', 'd-flex position-relative flex-column gap-2 align-items-center justify-content-center drag-handler container-fluid nitro-card-header');
+    const orivi = el('div', 'd-flex w-100'); orivi.appendChild(el('span', 'nitro-card-header-text', 'Kaverit & viestit'));
+    const sulje = el('button', 'd-flex align-items-center justify-content-center position-absolute end-2 nitro-card-header-close', null, { type: 'button', 'aria-label': 'Sulje ikkuna' });
+    sulje.appendChild(risti('fa-icon w-12 h-12')); sulje.onclick = () => avaa(false); orivi.appendChild(sulje); ots.appendChild(orivi);
+    tabit = el('div', 'km-tabs', null, { role: 'tablist' });
+    const keho = el('div', 'km-body');
+    for (const v of VALILEHDET) { paneelit[v.k] = el('div', 'km-pane is-hidden'); keho.appendChild(paneelit[v.k]); }
+    kortti.append(ots, tabit, keho); juuri.appendChild(kortti); document.body.appendChild(juuri);
     // pelin näppäinkuuntelijat eivät saa nähdä kirjoittamista (muuten peli siirtää fokuksen omaan chattiinsa)
     for (const tyyppi of ['keydown', 'keyup', 'keypress']) juuri.addEventListener(tyyppi, e => e.stopPropagation());
+    // suhdevalikko sulkeutuu klikkauksesta muualle (kuten v3:n FriendRow)
+    juuri.addEventListener('mousedown', e => { if (T.suhdeAuki != null && !e.target.closest('.km-rel, .km-suhde')) { T.suhdeAuki = null; piirra(); } });
     raahattava(ots);
-    new ResizeObserver(() => tallennaPaikka()).observe(juuri);
+    new ResizeObserver(() => tallennaPaikka()).observe(kortti);
     ajoita(asennaNappi, 1500); asennaNappi();
     ajoita(paivitaMerkit, 2000);
-    VW.kuplaMessenger = { versio: VERSIO, tila: T, avaa, piirra, laheta };
+    VW.kuplaMessenger = { versio: VERSIO, tila: T, avaa, piirra, laheta, avaaKetju };
     loki('valmis', VERSIO);
   }
-  function tallennaPaikka() { if (!elossa() || !juuri.offsetWidth) return; try { localStorage.setItem('km2.paikka', JSON.stringify({ x: juuri.offsetLeft, y: juuri.offsetTop, w: juuri.offsetWidth, h: juuri.offsetHeight })); } catch (e) {} }
+  function tallennaPaikka() { if (!elossa() || !kortti.offsetWidth) return;
+    try { localStorage.setItem('km2.paikka', JSON.stringify({ x: juuri.offsetLeft, y: juuri.offsetTop, w: kortti.offsetWidth, h: kortti.offsetHeight })); } catch (e) {} }
   function raahattava(kahva) {
     kahva.addEventListener('pointerdown', e => { if (e.target.closest('button')) return;
       const x0 = e.clientX - juuri.offsetLeft, y0 = e.clientY - juuri.offsetTop;
@@ -212,18 +998,21 @@
       addEventListener('pointermove', liiku); addEventListener('pointerup', loppu); });
   }
   function avaa(auki) {
-    T.auki = auki == null ? !T.auki : !!auki; juuri.style.display = T.auki ? 'flex' : 'none';
-    if (!T.auki) delete paneelit.datajako.dataset.auki;
-    if (T.auki && T.valilehti === 'viestit' && T.aktiivinen != null) T.lukematta.delete(T.aktiivinen);
-    if (T.auki) piirra(); paivitaMerkit();
+    T.auki = auki == null ? !T.auki : !!auki; juuri.style.display = T.auki ? '' : 'none';
+    if (T.auki) { juuri.style.left = Math.min(juuri.offsetLeft, Math.max(0, innerWidth - 120)) + 'px'; juuri.style.top = Math.min(juuri.offsetTop, Math.max(0, innerHeight - 80)) + 'px'; }
+    else { delete paneelit.datajako.dataset.auki; T.dialogi = null; T.suhdeAuki = null; }
+    piirra();
   }
-  // työkalupalkin nappi: pelin oma viesti-ikoni, lisätään ikonisäiliöön; koko palkki voi syntyä uudelleen, joten tarkistetaan 1,5 s välein
+  const vaihda = k => { T.valilehti = k; T.dialogi = null; T.suhdeAuki = null; piirra(); };
+  function avaaKetju(id) { T.aktiivinen = id; T.valilehti = 'viestit'; T.suljetut.delete(id); T.lukematta.delete(id); if (!T.auki) avaa(true); else piirra(); }
+
+  // työkalupalkin nappi pelin omaan ikonisäiliöön; koko palkki voi syntyä uudelleen (ToolbarView), joten tarkistetaan 1,5 s välein
   function asennaNappi() {
     if (nappi && document.body.contains(nappi)) return;
     const sailio = document.querySelector('.nitro-toolbar-main-icons');
-    nappi = el('div', 'toolbar-control text-center km2-nappi', null, { title: 'Viestit ja kaverit' });
-    const ikoni = el('div', 'cursor-pointer navigation-item icon icon-message nitro-toolbar-icon sidebar-navigation-icon'); ikoni.style.position = 'relative';
-    merkki = el('span', 'km2-toolbar-luku'); merkki.style.display = 'none'; ikoni.appendChild(merkki);
+    nappi = el('div', 'toolbar-control text-center km2-nappi', null, { title: 'Kaverit & viestit' });
+    const ikoni = el('div', 'cursor-pointer navigation-item icon icon-message nitro-toolbar-icon sidebar-navigation-icon');
+    nappiMerkki = el('span', 'km-badge km-toolbar-count'); nappiMerkki.style.display = 'none'; ikoni.appendChild(nappiMerkki);
     const nimiko = el('div', 'toolbar-control-label w-100 text-center'); nimiko.appendChild(el('div', 'd-inline text-white fw-bold text-center nitro-small-size-text', 'Viestit'));   // sama rakenne kuin pelin Kamera-napissa
     nappi.append(ikoni, nimiko);
     nappi.onclick = () => avaa();
@@ -235,148 +1024,288 @@
   const djLukematta = () => { const u = djUI(); const n = u && u.avaaja ? parseInt(u.avaaja.textContent, 10) : NaN; return Number.isFinite(n) ? n : 0; };
   const lukemattomat = () => [...T.lukematta.values()].reduce((a, b) => a + b, 0);
   const mainintojaUusia = () => T.maininnat.filter(m => !m.luettu).length;
+  const paikallaMaara = () => [...T.kaverit.values()].filter(f => f.paikalla).length;
   function paivitaMerkit() {
-    // Datajako asuu nyt Viestit-ikkunan välilehdellä (Res 13.10. 07:38): sen oma kelluva 💬-nappi piiloon, lukemattomat näkyvät tämän napin luvussa
+    // Datajako asuu Viestit-ikkunan välilehdellä (Res 13.10. 07:38): sen oma kelluva 💬-nappi piiloon, lukemattomat näkyvät tämän napin luvussa
     const dju = djUI(); if (dju && dju.avaaja && dju.avaaja.style.display !== 'none') dju.avaaja.style.display = 'none';
     const yht = lukemattomat() + mainintojaUusia() + djLukematta();
-    if (merkki) { merkki.textContent = yht > 99 ? '99+' : String(yht); merkki.style.display = yht ? '' : 'none'; }
-    if (!juuri) return;
-    const luvut = { viestit: lukemattomat(), maininnat: mainintojaUusia(), pyynnot: T.pyynnot.size, datajako: djLukematta() };
-    for (const b of juuri.querySelectorAll('.km2-tab')) { const k = b.dataset.k, n = luvut[k] || 0;
-      b.classList.toggle('on', k === T.valilehti); b.textContent = VALILEHDET.find(v => v[0] === k)[1];
-      if (n) b.appendChild(el('span', 'km2-luku' + (k === 'pyynnot' ? ' hiljaa' : ''), String(n))); }
+    if (nappiMerkki) { nappiMerkki.textContent = yht > 99 ? '99+' : String(yht); nappiMerkki.style.display = yht ? '' : 'none'; }
+    if (juuri && T.auki) piirraTabit();
   }
   let ajastin = null;
-  function paivitaPian() { if (ajastin) return; ajastin = setTimeout(() => { ajastin = null; if (T.auki) piirra(); paivitaMerkit(); }, 120); }
-  // pää palvelimen imagerilta; tuntematon (oma) vaateosa voi palauttaa 7x1-virhekuvan -> näytetään nimen alkukirjain
-  function paaEl(asu, paikalla, nimi) { const p = el('div', 'km2-pää' + (paikalla ? ' paikalla' : ''), (nimi || '?').slice(0, 1).toUpperCase());
-    if (asu) { const i = el('img', null, null, { alt: '', loading: 'lazy' }); i.onload = () => { if (i.naturalWidth < 20) i.remove(); else p.firstChild && p.firstChild.nodeType === 3 && p.firstChild.remove(); }; i.onerror = () => i.remove(); i.src = paa(asu); p.appendChild(i); } return p; }
-  function rivi(asu, paikalla, nimi, alarivi, oikea) {
-    const r = el('div', 'km2-rivi'); const t = el('div', 'km2-tiedot');
-    t.append(el('div', 'km2-nimi', nimi), el('div', 'km2-pieni', alarivi || ''));
-    r.append(paaEl(asu, paikalla, nimi), t); if (oikea) r.appendChild(oikea); return r;
+  function paivitaPian() { if (ajastin) return; ajastin = setTimeout(() => { ajastin = null; if (T.auki) piirra(); else paivitaMerkit(); }, 120); }
+
+  function piirraTabit() {
+    tabit.textContent = '';
+    const luvut = { viestit: [lukemattomat()], pyynnot: [T.pyynnot.size, true], maininnat: [mainintojaUusia()], datajako: [djLukematta()] };
+    for (const v of VALILEHDET) {
+      const on = T.valilehti === v.k;
+      const b = el('button', 'km-tab' + (on ? ' is-active' : ''), null, { type: 'button', role: 'tab', 'aria-selected': String(on) });
+      b.appendChild(el('span', 'km-icon ' + v.ikoni)); b.appendChild(document.createTextNode(v.nimi));
+      if (v.k === 'kaverit' && T.kaverilistaSaatu > 0) b.appendChild(el('span', 'km-tab-meta', paikallaMaara() + '/' + T.kaverit.size));
+      const l = luvut[v.k]; const m = l && merkkiEl(l[0], l[1]); if (m) b.appendChild(m);
+      b.onclick = () => vaihda(v.k); tabit.appendChild(b);
+    }
   }
 
+  // Koko välilehti piirretään uudelleen jokaisesta muutoksesta: kirjoituskentän fokus/valinta ja listojen vieritys palautetaan avaimella.
   function piirra() {
     if (!juuri) return;
-    for (const [k] of VALILEHDET) paneelit[k].classList.toggle('piilo', k !== T.valilehti);
-    if (T.valilehti !== 'datajako' || !T.auki) delete paneelit.datajako.dataset.auki;
-    const p = paneelit[T.valilehti]; const fokus = document.activeElement && juuri.contains(document.activeElement) ? document.activeElement.dataset.km2 : null;
-    const arvo = fokus ? document.activeElement.value : null;
+    if (!T.auki) { paivitaMerkit(); return; }
+    const ae = document.activeElement, fokus = ae && juuri.contains(ae) && ae.dataset && ae.dataset.km ? { k: ae.dataset.km, a: ae.selectionStart, b: ae.selectionEnd } : null;
+    const vieritys = {}; juuri.querySelectorAll('[data-kmv]').forEach(e => { vieritys[e.dataset.kmv] = { top: e.scrollTop, pohjassa: e.scrollHeight - e.scrollTop - e.clientHeight < 40 }; });
+    piirraTabit();
+    for (const v of VALILEHDET) paneelit[v.k].classList.toggle('is-hidden', v.k !== T.valilehti);
+    if (T.valilehti !== 'datajako') delete paneelit.datajako.dataset.auki;
+    const p = paneelit[T.valilehti];
     ({ viestit: piirraViestit, kaverit: piirraKaverit, pyynnot: piirraPyynnot, haku: piirraHaku, maininnat: piirraMaininnat, datajako: piirraDatajako })[T.valilehti](p);
-    if (fokus) { const e = p.querySelector('[data-km2="' + fokus + '"]'); if (e) { if (arvo != null && e.value !== arvo) e.value = arvo; e.focus(); } }
-    paivitaMerkit();
+    p.querySelectorAll('[data-kmv]').forEach(e => { const s = vieritys[e.dataset.kmv];
+      if (e.dataset.kmvAlas === '1') e.scrollTop = (!s || s.pohjassa) ? e.scrollHeight : s.top; else if (s) e.scrollTop = s.top; });
+    if (fokus) { const e = p.querySelector('[data-km="' + fokus.k + '"]'); if (e) { e.focus(); try { if (fokus.a != null) e.setSelectionRange(fokus.a, fokus.b); } catch (er) {} } }
+    const dju = djUI(); if (dju && dju.avaaja) dju.avaaja.style.display = 'none';
+    if (nappiMerkki) { const yht = lukemattomat() + mainintojaUusia() + djLukematta(); nappiMerkki.textContent = yht > 99 ? '99+' : String(yht); nappiMerkki.style.display = yht ? '' : 'none'; }
   }
 
+  // ---------- Viestit (MessengerConversationsTab + MessengerThreadPane) ----------
+  const henkilo = id => T.kaverit.get(id) || { id, nimi: nimiId(id), paikalla: false, seurattava: false, asu: '', motto: '' };
+  function ketjuLista() {
+    return [...T.ketjut.entries()].filter(([id, l]) => l.length && !T.suljetut.has(id)).map(([id, l]) => ({ id, l, viim: l[l.length - 1] })).sort((a, b) => b.viim.t - a.viim.t);
+  }
   function piirraViestit(p) {
-    if (T.aktiivinen != null) return piirraKetju(p);
     p.textContent = '';
-    const ketjut = [...T.ketjut.entries()].map(([id, l]) => ({ id, viimeinen: l[l.length - 1] })).filter(k => k.viimeinen).sort((a, b) => b.viimeinen.t - a.viimeinen.t);
-    if (!ketjut.length) { p.appendChild(el('div', 'km2-tyhja', 'Ei vielä viestejä. Avaa keskustelu Kaverit-välilehdeltä.')); return; }
-    for (const k of ketjut) { const f = T.kaverit.get(k.id) || {}; const n = T.lukematta.get(k.id) || 0;
-      const oikea = el('div'); oikea.appendChild(el('div', 'km2-aika', listaAika(k.viimeinen.t))); if (n) oikea.appendChild(el('span', 'km2-luku', String(n)));
-      const esikatselu = (k.viimeinen.oma ? 'Sinä: ' : '') + (k.viimeinen.kutsu ? 'Kutsu huoneeseen' : k.viimeinen.teksti);
-      const r = rivi(f.asu, f.paikalla, f.nimi || nimiId(k.id), esikatselu, oikea); r.onclick = () => avaaKetju(k.id); p.appendChild(r); }
+    const lista = ketjuLista();
+    if (T.aktiivinen != null && !lista.some(k => k.id === T.aktiivinen)) lista.unshift({ id: T.aktiivinen, l: T.ketjut.get(T.aktiivinen) || [], viim: null });
+    if (T.aktiivinen == null && lista.length) T.aktiivinen = lista[0].id;
+    if (T.aktiivinen != null) T.lukematta.delete(T.aktiivinen);
+    const sivu = el('div', 'km-side'); sivu.appendChild(el('div', 'km-sec', 'Yksityisviestit'));
+    const sc = el('div', 'km-scroll', null, { 'data-kmv': 'ketjut' });
+    if (!lista.length) sc.appendChild(tyhja('Ei vielä keskusteluja.', 'Aloita keskustelu Kaverit-välilehdeltä', () => vaihda('kaverit')));
+    for (const k of lista) {
+      const f = henkilo(k.id), aito = k.id > 0, aktiivi = k.id === T.aktiivinen;
+      const r = el('div', 'km-row' + (aktiivi ? ' is-active' : '') + (aito && !f.paikalla ? ' is-offline' : ''), null, { role: 'button', tabindex: '0' });
+      r.onclick = () => { T.aktiivinen = k.id; piirra(); };
+      r.appendChild(avatar(f.asu, { paikalla: aito ? f.paikalla : undefined, nimi: f.nimi }));
+      const nm = el('div', 'km-nm'); nm.appendChild(el('span', 'km-name', f.nimi));
+      const v = k.viim; nm.appendChild(el('small', null, v ? (v.oma ? 'Sinä: ' : '') + (v.kutsu ? 'Kutsu huoneeseen' : v.teksti) : ''));
+      const meta = el('div', 'km-row-meta'); meta.appendChild(el('time', null, v ? listaAika(v.t) : ''));
+      const m = merkkiEl(aktiivi ? 0 : (T.lukematta.get(k.id) || 0)); if (m) meta.appendChild(m);
+      r.append(nm, meta); sc.appendChild(r);
+    }
+    sivu.appendChild(sc); p.appendChild(sivu);
+    if (T.aktiivinen != null) p.appendChild(ketjuPaneeli(T.aktiivinen));
+    else { const m = el('div', 'km-main'); m.appendChild(tyhja('Viestit näkyvät tässä, kun aloitat keskustelun.')); p.appendChild(m); }
   }
-  function avaaKetju(id) { T.aktiivinen = id; T.valilehti = 'viestit'; T.lukematta.delete(id); if (!T.auki) avaa(true); else piirra(); }
-  function piirraKetju(p) {
-    const id = T.aktiivinen, f = T.kaverit.get(id) || {}, l = T.ketjut.get(id) || [];
-    p.textContent = ''; const v = el('div', 'km2-viestit');
-    const ots = el('div', 'km2-ketjuots');
-    const takaisin = el('button', null, '‹ Kaikki', { title: 'Takaisin keskusteluihin' }); takaisin.onclick = () => { T.aktiivinen = null; piirra(); };
-    const tiedot = el('div', 'km2-tiedot'); tiedot.append(el('div', 'km2-nimi', f.nimi || nimiId(id)), el('div', 'km2-pieni', f.paikalla ? 'Paikalla' : 'Poissa'));
-    ots.append(takaisin, paaEl(f.asu, f.paikalla, f.nimi || nimiId(id)), tiedot);
-    const napit = el('div', 'km2-napit');
-    if (f.paikalla && f.seurattava) { const s = el('button', null, 'Seuraa'); s.onclick = () => laheta(3997, [id]); napit.appendChild(s); }
-    if (id > 0) { const pr = el('button', null, 'Profiili'); pr.onclick = () => laheta(3265, [id, true]); napit.appendChild(pr); }
-    ots.appendChild(napit);
-    const ketju = el('div', 'km2-ketju'); ketju.style.display = 'flex'; ketju.style.flexDirection = 'column';
-    let edPaiva = '';
-    if (!l.length) ketju.appendChild(el('div', 'km2-tyhja', 'Ei viestejä tässä istunnossa.'));
-    for (const m of l) { const pv = paiva(m.t); if (pv !== edPaiva) { ketju.appendChild(el('div', 'km2-paivays', pv)); edPaiva = pv; }
-      const k = el('div', 'km2-kupla' + (m.oma ? ' oma' : '') + (m.kutsu ? ' kutsu' : ''), (m.kutsu ? 'Kutsu huoneeseen: ' : '') + m.teksti);
-      k.appendChild(el('span', 'km2-klo', klo(m.t) + (m.offline ? ' (kun olit poissa)' : '') + (m.virhe ? ' (ei lähtenyt)' : ''))); ketju.appendChild(k); }
-    const kirjoita = el('div', 'km2-kirjoita');
-    const kentta = el('input', 'km2-kentta', null, { maxlength: '255', placeholder: f.paikalla === false ? 'Kaveri on poissa' : 'Kirjoita viesti', 'data-km2': 'viesti-' + id });
-    const laskuri = el('span', 'km2-laskuri', '');
-    const lahetaNappi = el('button', 'km2-ens', 'Lähetä');
-    const tee = () => { const teksti = kentta.value.trim(); if (!teksti) return; const ok = laheta(3567, [id, teksti.slice(0, 255)]);
-      lisaaViesti(id, { oma: true, teksti: teksti.slice(0, 255), t: Date.now(), virhe: !ok }); kentta.value = ''; piirra(); };
-    kentta.addEventListener('input', () => { const n = kentta.value.length; laskuri.textContent = n >= 200 ? n + '/255' : ''; });
-    kentta.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); tee(); } });
-    lahetaNappi.onclick = tee;
-    kirjoita.append(kentta, laskuri, lahetaNappi);
-    v.append(ots, ketju, kirjoita); p.appendChild(v);
-    requestAnimationFrame(() => { ketju.scrollTop = ketju.scrollHeight; });
+  function ketjuPaneeli(id) {
+    const f = henkilo(id), aito = id > 0, l = T.ketjut.get(id) || [], o = oma();
+    const main = el('div', 'km-main');
+    const mh = el('div', 'km-mh'); mh.appendChild(avatar(f.asu, { paikalla: aito ? f.paikalla : undefined, nimi: f.nimi }));
+    const otsikko = el('div', 'km-mh-title'); otsikko.appendChild(el('b', null, f.nimi)); if (aito) otsikko.appendChild(el('span', null, f.paikalla ? 'Paikalla' : 'Ei paikalla'));
+    const toim = el('div', 'km-mh-actions');
+    if (aito) {
+      const s = nappiEl('is-square', null, 'follow', () => laheta(3997, [id])); s.title = 'Seuraa'; s.setAttribute('aria-label', 'Seuraa'); s.disabled = !(f.paikalla && f.seurattava);
+      const pr = nappiEl('is-square', null, 'profile', () => laheta(3265, [id, true])); pr.title = 'Profiili'; pr.setAttribute('aria-label', 'Profiili');
+      toim.append(s, pr);
+    }
+    const sk = nappiEl('is-square', null, risti(), () => { T.suljetut.add(id); T.aktiivinen = null; piirra(); }); sk.title = 'Sulje keskustelu'; sk.setAttribute('aria-label', 'Sulje keskustelu');
+    toim.appendChild(sk); mh.append(otsikko, toim);
+    const msgs = el('div', 'km-msgs', null, { 'data-kmv': 'msgs-' + id, 'data-kmv-alas': '1' });
+    const huom = el('div', 'km-sys is-notice'); huom.appendChild(el('span', 'nitro-friends-spritesheet icon-warning flex-shrink-0'));
+    huom.appendChild(el('div', 'km-sys-text', 'Filtteröimme Chat-viestit turvallisuussyistä. Henkilötietojen ja salasanan kertominen on sääntöjemme vastaista.'));
+    msgs.appendChild(huom);
+    const poissa = l.filter(v => v.offline).length;
+    let edPaiva = '', edLahettaja = null, edT = 0, ryhma = null, poissaNaytetty = false;
+    for (const v of l) {
+      const pv = paivaNimi(v.t);
+      if (pv !== edPaiva) { msgs.appendChild(el('div', 'km-day', pv)); edPaiva = pv; ryhma = null; }
+      if (v.offline && !poissaNaytetty) { poissaNaytetty = true; const s = el('div', 'km-sys'); s.appendChild(el('div', 'km-sys-text', poissa === 1 ? '1 viesti kun olit poissa' : poissa + ' viestiä kun olit poissa')); msgs.appendChild(s); ryhma = null; }
+      if (v.kutsu) { const s = el('div', 'km-sys is-invite'); s.appendChild(el('span', 'messenger-notification-icon flex-shrink-0'));
+        const t = el('div', 'km-sys-text'); t.appendChild(el('b', null, 'Kutsu huoneeseen')); t.appendChild(document.createTextNode(' (' + klo(v.t) + '): ' + v.teksti));
+        s.appendChild(t); msgs.appendChild(s); ryhma = null; continue; }
+      const lahettaja = v.oma ? 'oma' : id;
+      if (!ryhma || lahettaja !== edLahettaja || v.t - edT > 5 * 60e3) {
+        const m = el('div', 'km-m' + (v.oma ? ' is-own' : ''));
+        m.appendChild(avatar(v.oma ? o.asu : f.asu, { iso: true, suunta: v.oma ? 4 : 2, nimi: v.oma ? o.nimi : f.nimi }));
+        const runko = el('div', 'km-m-body'); const who = el('div', 'km-who'); who.append(el('span', null, v.oma ? o.nimi : f.nimi), el('span', 'km-ts', klo(v.t)));
+        runko.appendChild(who); m.appendChild(runko); msgs.appendChild(m); ryhma = runko; edLahettaja = lahettaja;
+      }
+      ryhma.appendChild(el('div', 'km-txt', v.teksti + (v.virhe ? '  (ei lähtenyt)' : ''))); edT = v.t;
+    }
+    const inp = el('div', 'km-inp');
+    const k = el('input', null, null, { type: 'text', maxlength: '255', placeholder: 'Viesti: ' + f.nimi, 'data-km': 'viesti-' + id }); k.value = T.luonnos.get(id) || '';
+    const laskuri = el('span', 'km-counter'); const lb = nappiEl('is-primary', 'Lähetä');
+    const paivLaskuri = () => { const n = k.value.length; laskuri.textContent = n + '/255'; laskuri.style.display = n >= 200 ? '' : 'none'; laskuri.classList.toggle('is-full', n >= 255); lb.disabled = !k.value.trim(); };
+    k.addEventListener('input', () => { T.luonnos.set(id, k.value); paivLaskuri(); });
+    const tee = () => { const teksti = k.value.trim().slice(0, 255); if (!teksti) return; const ok = laheta(3567, [id, teksti]);
+      T.luonnos.delete(id); lisaaViesti(id, { oma: true, teksti, t: Date.now(), virhe: !ok }); piirra(); };
+    k.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); tee(); } });
+    lb.onclick = tee; paivLaskuri(); inp.append(k, laskuri, lb);
+    main.append(mh, msgs, inp); return main;
   }
 
-  let suodatin = '';
+  // ---------- Kaverit (MessengerFriendsTab) ----------
+  const SUHTEET = [[0, 'icon-none'], [1, 'icon-heart'], [2, 'icon-smile'], [3, 'icon-bobba']];
+  const suhdeIkoni = s => (SUHTEET.find(x => x[0] === s) || SUHTEET[0])[1];
+  function kaveriRivi(f) {
+    const valittu = T.valitut.has(f.id);
+    const r = el('div', 'km-row' + (valittu ? ' is-selected' : '') + (f.paikalla ? '' : ' is-offline'), null, { role: 'button', tabindex: '0' });
+    r.onclick = () => { if (f.id <= 0) return; valittu ? T.valitut.delete(f.id) : T.valitut.add(f.id); piirra(); };
+    if (f.id > 0) r.appendChild(el('span', 'km-check' + (valittu ? ' is-on' : '')));
+    r.appendChild(avatar(f.asu, { paikalla: f.paikalla, suunta: 4, nimi: f.nimi }));
+    const nm = el('div', 'km-nm'); nm.appendChild(el('span', 'km-name', f.nimi)); if (f.motto) nm.appendChild(el('small', null, f.motto));
+    const toim = el('div', 'km-row-actions'); toim.onclick = e => e.stopPropagation();
+    if (f.id > 0) { const s = ib(el('span', 'nitro-friends-spritesheet ' + suhdeIkoni(f.suhde)), 'Suhde', () => { T.suhdeAuki = T.suhdeAuki === f.id ? null : f.id; piirra(); }); s.classList.add('km-suhde'); toim.appendChild(s); }
+    if (f.paikalla && f.seurattava) toim.appendChild(ib('follow', 'Seuraa', () => laheta(3997, [f.id])));
+    toim.appendChild(ib('start-chat', 'Lähetä viesti', () => avaaKetju(f.id)));
+    r.append(nm, toim);
+    if (T.suhdeAuki === f.id) {
+      const v = el('div', 'km-rel'); v.onclick = e => e.stopPropagation();
+      for (const [tyyppi, ik] of SUHTEET) v.appendChild(ib(el('span', 'nitro-friends-spritesheet ' + ik), 'Suhde', () => { laheta(3768, [f.id, tyyppi]); f.suhde = tyyppi; T.suhdeAuki = null; piirra(); }));
+      r.appendChild(v);
+    }
+    return r;
+  }
   function piirraKaverit(p) {
     p.textContent = '';
-    const haku = el('input', 'km2-kentta', null, { placeholder: 'Etsi kavereista', 'data-km2': 'kaverisuodatin' }); haku.value = suodatin;
-    haku.addEventListener('input', () => { suodatin = haku.value; piirra(); }); p.appendChild(haku);
-    const kaikki = [...T.kaverit.values()].filter(f => !suodatin || f.nimi.toLowerCase().includes(suodatin.toLowerCase())).sort((a, b) => a.nimi.localeCompare(b.nimi, 'fi'));
-    if (T.kaverilistaSaatu <= 0) { p.appendChild(el('div', 'km2-tyhja', 'Kaverilista latautuu...')); return; }
-    const yla = el('div', 'km2-pieni', 'Kavereita ' + T.kaverit.size + (T.raja ? ' / ' + T.raja : '')); yla.style.margin = '6px 4px'; p.appendChild(yla);
-    for (const [otsikko, lista] of [['Paikalla', kaikki.filter(f => f.paikalla)], ['Poissa', kaikki.filter(f => !f.paikalla)]]) {
-      p.appendChild(el('div', 'km2-osio', otsikko + ' (' + lista.length + ')'));
-      for (const f of lista) { const napit = el('div', 'km2-napit');
-        const v = el('button', null, 'Viesti'); v.onclick = e => { e.stopPropagation(); avaaKetju(f.id); }; napit.appendChild(v);
-        if (f.paikalla && f.seurattava) { const s = el('button', null, 'Seuraa'); s.onclick = e => { e.stopPropagation(); laheta(3997, [f.id]); }; napit.appendChild(s); }
-        const r = rivi(f.asu, f.paikalla, f.nimi, f.motto, napit); r.onclick = () => laheta(3265, [f.id, true]); r.title = 'Avaa profiili'; p.appendChild(r); }
+    const col = el('div', 'km-col');
+    const tb = el('div', 'km-toolbar'); const lab = el('label', 'km-search'); lab.appendChild(el('span', 'km-icon search'));
+    const q = el('input', null, null, { placeholder: 'Hae kavereista', 'data-km': 'kaverisuodatin' }); q.value = T.suodatin; q.addEventListener('input', () => { T.suodatin = q.value; piirra(); });
+    lab.appendChild(q); tb.appendChild(lab);
+    tb.appendChild(el('span', 'km-toolbar-meta', T.raja ? 'Kavereita ' + T.kaverit.size + '/' + T.raja : 'Kavereita ' + T.kaverit.size));
+    const sc = el('div', 'km-scroll', null, { 'data-kmv': 'kaverit' });
+    const suod = T.suodatin.trim().toLowerCase(), osuu = f => !suod || f.nimi.toLowerCase().includes(suod);
+    const kaikki = [...T.kaverit.values()].sort(nimiJarjestys);
+    const paikalla = kaikki.filter(f => f.paikalla && osuu(f)), poissa = kaikki.filter(f => !f.paikalla && osuu(f));
+    if (T.kaverilistaSaatu <= 0) sc.appendChild(tyhja('Kaverilista latautuu...'));
+    else if (!kaikki.length) sc.appendChild(tyhja('Sinulla ei ole vielä kavereita.', 'Etsi pelaajia Haku-välilehdeltä', () => vaihda('haku')));
+    else {
+      const valittavat = paikalla.filter(f => f.id > 0).map(f => f.id), kaikkiValittu = valittavat.length && valittavat.every(id => T.valitut.has(id));
+      const osio = (nimi, auki, vaihdaAuki, lista, tyhjaTeksti, lisa) => {
+        const b = el('button', 'km-sec is-toggle', null, { type: 'button' }); b.appendChild(el('span', 'km-caret' + (auki ? '' : ' is-closed'))); b.appendChild(document.createTextNode(nimi + ' (' + lista.length + ')'));
+        if (lisa) b.appendChild(lisa); b.onclick = () => { vaihdaAuki(); piirra(); }; sc.appendChild(b);
+        if (auki && !lista.length) sc.appendChild(el('div', 'km-empty is-inline', suod ? 'Ei osumia tällä haulla.' : tyhjaTeksti));
+        if (auki) for (const f of lista) sc.appendChild(kaveriRivi(f));
+      };
+      let valitse = null;
+      if (valittavat.length) { valitse = el('span', 'km-sec-action', kaikkiValittu ? 'Poista valinnat' : 'Valitse kaikki', { role: 'button' });
+        valitse.onclick = e => { e.stopPropagation(); if (kaikkiValittu) valittavat.forEach(id => T.valitut.delete(id)); else valittavat.forEach(id => T.valitut.add(id)); piirra(); }; }
+      osio('Paikalla', T.paikallaAuki, () => { T.paikallaAuki = !T.paikallaAuki; }, paikalla, 'Kukaan kavereistasi ei ole nyt paikalla.', valitse);
+      osio('Poissa', T.poissaAuki, () => { T.poissaAuki = !T.poissaAuki; }, poissa, 'Kaikki kaverisi ovat paikalla.');
     }
+    for (const id of [...T.valitut]) if (!T.kaverit.has(id)) T.valitut.delete(id);   // poistettu kaveri ei voi jäädä valituksi
+    const n = T.valitut.size;
+    const ala = el('div', 'km-footer');
+    const kutsu = nappiEl('', 'Kutsu huoneeseen', 'invite', () => { T.dialogi = 'kutsu'; piirra(); }); kutsu.disabled = !n;
+    const poista = nappiEl('is-danger', 'Poista', 'remove', () => { T.dialogi = 'poista'; piirra(); }); poista.disabled = !n;
+    ala.append(kutsu, el('span', 'km-footer-spacer')); if (n) ala.appendChild(el('span', 'km-toolbar-meta', n + ' valittu')); ala.appendChild(poista);
+    col.append(tb, sc, ala); p.appendChild(col);
+    if (T.dialogi) p.appendChild(dialogi(n));
   }
+  function dialogi(n) {
+    const ov = el('div', 'km-overlay'); ov.onclick = () => { T.dialogi = null; piirra(); };
+    const d = el('div', 'km-dialog'); d.onclick = e => e.stopPropagation();
+    const peru = nappiEl('', 'Peruuta', null, () => { T.dialogi = null; piirra(); });
+    const ids = [...T.valitut];
+    if (T.dialogi === 'poista') {
+      d.append(el('h3', null, 'Poista kavereita'), el('p', null, 'Haluatko varmasti poistaa nämä kaverit?'), el('div', 'km-dialog-list', ids.map(nimiId).join(', ')));
+      const ok = nappiEl('is-danger', 'Poista', null, () => { laheta(1689, [ids.length, ...ids]); T.valitut.clear(); T.dialogi = null; piirra(); }); ok.disabled = !ids.length;
+      const r = el('div', 'km-dialog-actions'); r.append(peru, ok); d.appendChild(r);
+    } else {
+      d.append(el('h3', null, 'Kutsu huoneeseen'), el('p', null, 'Kutsu ' + n + ' kaveria huoneeseen, jossa olet nyt.'));
+      const ta = el('textarea', null, null, { maxlength: '255', placeholder: 'Kirjoita kutsuviesti', 'data-km': 'kutsuteksti' }); ta.value = T.kutsuteksti;
+      const ok = nappiEl('is-primary', 'Lähetä kutsu', null, () => { const t = T.kutsuteksti.trim(); if (!t || !ids.length) return; laheta(1276, [ids.length, ...ids, t.slice(0, 255)]); T.kutsuteksti = ''; T.dialogi = null; piirra(); });
+      ok.disabled = !T.kutsuteksti.trim() || !ids.length; ta.addEventListener('input', () => { T.kutsuteksti = ta.value; ok.disabled = !ta.value.trim() || !ids.length; });
+      const r = el('div', 'km-dialog-actions'); r.append(peru, ok); d.append(ta, r);
+    }
+    ov.appendChild(d); return ov;
+  }
+
+  // ---------- Pyynnöt (MessengerRequestsTab) ----------
   function piirraPyynnot(p) {
     p.textContent = '';
-    const paiv = el('button', null, 'Päivitä'); paiv.onclick = () => laheta(2448, []); p.appendChild(paiv);
-    if (!T.pyynnot.size) { p.appendChild(el('div', 'km2-tyhja', 'Ei kaveripyyntöjä. (Ennen skriptin latausta tulleet näkyvät Päivitä-napilla.)')); return; }
-    for (const r of T.pyynnot.values()) { const napit = el('div', 'km2-napit');
-      const ok = el('button', 'km2-ens', 'Hyväksy'); ok.onclick = e => { e.stopPropagation(); laheta(137, [1, r.id]); T.pyynnot.delete(r.id); piirra(); };
-      const ei = el('button', 'km2-vaara', 'Hylkää'); ei.onclick = e => { e.stopPropagation(); laheta(2890, [false, 1, r.id]); T.pyynnot.delete(r.id); piirra(); };
-      napit.append(ok, ei); p.appendChild(rivi(r.asu, false, r.nimi, 'Haluaa kaveriksesi', napit)); }
+    const col = el('div', 'km-col');
+    const sec = el('div', 'km-sec', 'Kaveripyynnöt (' + T.pyynnot.size + ')');
+    const paiv = el('span', 'km-sec-action', 'Päivitä', { role: 'button', title: 'Hae pyynnöt palvelimelta' }); paiv.onclick = () => laheta(2448, []); sec.appendChild(paiv);
+    const sc = el('div', 'km-scroll', null, { 'data-kmv': 'pyynnot' });
+    if (!T.pyynnot.size) sc.appendChild(tyhja('Ei uusia kaveripyyntöjä.'));
+    for (const r of T.pyynnot.values()) {
+      const row = el('div', 'km-row'); row.appendChild(avatar(r.asu, { suunta: 4, nimi: r.nimi }));
+      const nm = el('div', 'km-nm'); const nimi = el('span', 'km-name', r.nimi, { role: 'button', title: 'Profiili' }); nimi.onclick = () => laheta(3265, [r.id, true]);
+      nm.append(nimi, el('small', null, 'Haluaa kaveriksesi'));
+      const toim = el('div', 'km-row-actions');
+      toim.append(nappiEl('is-primary', 'Hyväksy', null, () => { laheta(137, [1, r.id]); T.pyynnot.delete(r.id); piirra(); }),
+        nappiEl('', 'Hylkää', null, () => { laheta(2890, [false, 1, r.id]); T.pyynnot.delete(r.id); piirra(); }));
+      row.append(nm, toim); sc.appendChild(row);
+    }
+    col.append(sec, sc); p.appendChild(col);
   }
-  let hakusana = '';
+
+  // ---------- Haku (MessengerSearchTab) ----------
   function piirraHaku(p) {
     p.textContent = '';
-    const lomake = el('div', 'km2-kirjoita'); lomake.style.borderTop = '0'; lomake.style.paddingTop = '0';
-    const k = el('input', 'km2-kentta', null, { maxlength: '50', placeholder: 'Pelaajan nimi', 'data-km2': 'haku' }); k.value = hakusana;
-    const b = el('button', 'km2-ens', 'Hae');
-    const tee = () => { hakusana = k.value.trim(); if (hakusana) { T.haku = null; laheta(1210, [hakusana]); piirra(); } };
-    k.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); tee(); } }); k.addEventListener('input', () => { hakusana = k.value; });
-    b.onclick = tee; lomake.append(k, b); p.appendChild(lomake);
-    if (!T.haku) { if (hakusana) p.appendChild(el('div', 'km2-tyhja', 'Haetaan...')); return; }
-    for (const [otsikko, lista, kaveri] of [['Kaverit', T.haku.kaverit, true], ['Muut pelaajat', T.haku.muut, false]]) {
-      p.appendChild(el('div', 'km2-osio', otsikko + ' (' + lista.length + ')'));
-      for (const h of lista) { const napit = el('div', 'km2-napit'); const kf = T.kaverit.get(h.id);
-        if (kaveri) { const v = el('button', null, 'Viesti'); v.onclick = e => { e.stopPropagation(); avaaKetju(h.id); }; napit.appendChild(v); }
-        else { const lisaa = el('button', 'km2-ens', 'Lisää kaveriksi'); lisaa.onclick = e => { e.stopPropagation(); laheta(3157, [h.nimi]); lisaa.disabled = true; lisaa.textContent = 'Pyyntö lähetetty'; }; napit.appendChild(lisaa); }
-        const r = rivi(h.asu, kf ? kf.paikalla : false, h.nimi, h.motto, napit); r.onclick = () => laheta(3265, [h.id, true]); p.appendChild(r); }
+    const col = el('div', 'km-col');
+    const lomake = el('form', 'km-toolbar'); const lab = el('label', 'km-search'); lab.appendChild(el('span', 'km-icon search'));
+    const k = el('input', null, null, { maxlength: '50', placeholder: 'Hae pelaajaa nimellä', 'data-km': 'haku' }); k.value = T.hakusana; lab.appendChild(k);
+    const hae = nappiEl('', 'Hae'); hae.type = 'submit'; hae.onclick = null; hae.disabled = !T.hakusana.trim();
+    k.addEventListener('input', () => { T.hakusana = k.value; hae.disabled = !k.value.trim(); });
+    lomake.onsubmit = e => { e.preventDefault(); const v = T.hakusana.trim(); if (!v) return; T.haku = null; T.hakuKaynnissa = true; laheta(1210, [v]); piirra(); };
+    lomake.append(lab, hae);
+    const sc = el('div', 'km-scroll', null, { 'data-kmv': 'haku' });
+    const h = T.haku;
+    if (!h) sc.appendChild(tyhja(T.hakuKaynnissa ? 'Haetaan...' : 'Kirjoita pelaajan nimi ja paina Hae.'));
+    else if (!h.kaverit.length && !h.muut.length) sc.appendChild(tyhja('Haulla ei löytynyt pelaajia.'));
+    else for (const [nimi, lista, onKaveri] of [['Kaverit', h.kaverit, true], ['Muut pelaajat', h.muut, false]]) {
+      if (!lista.length) continue;
+      sc.appendChild(el('div', 'km-sec', nimi + ' (' + lista.length + ')'));
+      for (const x of lista) {
+        // palvelimen hakutulos lähettää aina isAvatarOnline = false (v3:n havainto): kaverin tila kaverilistasta, muille ei pistettä
+        const kf = onKaveri ? T.kaverit.get(x.id) : null, paikalla = kf ? kf.paikalla : undefined;
+        const r = el('div', 'km-row' + (paikalla === false ? ' is-offline' : ''));
+        r.appendChild(avatar((kf && kf.asu) || x.asu, { paikalla, suunta: 4, nimi: x.nimi }));
+        const nm = el('div', 'km-nm'); const nn = el('span', 'km-name', x.nimi, { role: 'button', title: 'Profiili' }); nn.onclick = () => laheta(3265, [x.id, true]);
+        nm.appendChild(nn); if (x.motto) nm.appendChild(el('small', null, x.motto));
+        const toim = el('div', 'km-row-actions'); toim.appendChild(ib('profile', 'Profiili', () => laheta(3265, [x.id, true])));
+        if (kf && kf.paikalla) toim.appendChild(ib('start-chat', 'Lähetä viesti', () => avaaKetju(x.id)));
+        if (!onKaveri && x.id !== oma().id) {
+          if (T.pyydetyt.has(x.id)) toim.appendChild(el('span', 'km-toolbar-meta', 'Pyyntö lähetetty'));
+          else toim.appendChild(nappiEl('', 'Lisää kaveriksi', 'add', () => { laheta(3157, [x.nimi]); T.pyydetyt.add(x.id); piirra(); }));
+        }
+        r.append(nm, toim); sc.appendChild(r);
+      }
     }
+    col.append(lomake, sc); p.appendChild(col);
   }
+
+  // ---------- Maininnat (lisäys v3:een: pelin omat 4801-4805) ----------
   function piirraMaininnat(p) {
     p.textContent = '';
-    const napit = el('div', 'km2-napit'); napit.style.marginBottom = '6px';
-    const paiv = el('button', null, 'Päivitä'); paiv.onclick = () => laheta(4803, []);
-    const kaikki = el('button', null, 'Merkitse kaikki luetuiksi'); kaikki.onclick = () => { laheta(4804, [0, 0]); for (const m of T.maininnat) m.luettu = true; piirra(); };
-    napit.append(paiv, kaikki); p.appendChild(napit);
-    if (!T.maininnat.length) { p.appendChild(el('div', 'km2-tyhja', 'Ei mainintoja. (Ennen skriptin latausta tulleet näkyvät Päivitä-napilla.)')); return; }
-    for (const m of T.maininnat) { const r = el('div', 'km2-maininta' + (m.luettu ? '' : ' uusi'));
-      const yla = rivi(m.asu, false, m.lahettaja, (m.huone > 0 ? m.huoneNimi || ('huone ' + m.huone) : 'Huoneeton maininta') + '  ·  ' + mainintaAika(m.aika));
-      const poista = el('button', 'km2-x', '✕', { title: 'Poista maininta' }); poista.onclick = e => { e.stopPropagation(); laheta(4805, [m.id]); T.maininnat = T.maininnat.filter(x => x.id !== m.id); piirra(); };
-      yla.appendChild(poista);
-      r.append(yla, el('div', null, m.viesti || 'Pelkkä @-maininta, ei viestiä'));
+    const col = el('div', 'km-col');
+    const sec = el('div', 'km-sec', 'Maininnat (' + T.maininnat.length + ')');
+    if (mainintojaUusia()) { const a = el('span', 'km-sec-action', 'Merkitse kaikki luetuiksi', { role: 'button' }); a.onclick = () => { laheta(4804, [0, 0]); T.maininnat.forEach(m => { m.luettu = true; }); piirra(); }; sec.appendChild(a); }
+    const paiv = el('span', 'km-sec-action', 'Päivitä', { role: 'button', title: 'Hae maininnat palvelimelta' }); paiv.onclick = () => laheta(4803, []); sec.appendChild(paiv);
+    const sc = el('div', 'km-scroll', null, { 'data-kmv': 'maininnat' });
+    if (!T.maininnat.length) sc.appendChild(tyhja('Ei mainintoja tässä istunnossa.', 'Hae aiemmat maininnat', () => laheta(4803, [])));
+    for (const m of T.maininnat) {
+      const r = el('div', 'km-row km-mrow' + (m.luettu ? '' : ' is-active'), null, { role: 'button', tabindex: '0', title: m.luettu ? '' : 'Merkitse luetuksi' });
       r.onclick = () => { if (!m.luettu) { laheta(4804, [1, m.id]); m.luettu = true; piirra(); } };
-      p.appendChild(r); }
+      r.appendChild(avatar(m.asu, { suunta: 2, nimi: m.lahettaja }));
+      const nm = el('div', 'km-nm'); nm.appendChild(el('span', 'km-name', m.lahettaja));
+      nm.appendChild(el('small', null, (m.huone > 0 ? (m.huoneNimi || 'huone ' + m.huone) : 'Ei huonetta') + ', ' + mainintaAika(m.aika)));
+      nm.appendChild(el('div', 'km-txt', m.viesti || '@-maininta ilman viestiä'));
+      const toim = el('div', 'km-row-actions'); toim.appendChild(ib(risti(), 'Poista maininta', () => { laheta(4805, [m.id]); T.maininnat = T.maininnat.filter(x => x.id !== m.id); piirra(); }));
+      r.append(nm, toim); sc.appendChild(r);
+    }
+    col.append(sec, sc); p.appendChild(col);
   }
-  // Datajako: oma ikkuna siirretään välilehden sisään ja sen kelluva avausnappi piilotetaan (Res 07:38: datajako pysyy asukanavalla)
+
+  // ---------- Datajako (Res 07:38: pysyy asukanavalla, tulee omaksi välilehdeksi) ----------
+  // Datajako-lisäosan oma ikkuna siirretään välilehden sisään; sen otsikko ja koonmuutoskahvat piilotetaan.
   function piirraDatajako(p) {
     const u = djUI();
-    if (!u || !u.ikkuna) { p.textContent = ''; p.appendChild(el('div', 'km2-tyhja', 'Datajako-lisäosa ei ole päällä tässä selaimessa.')); return; }
+    if (!u || !u.ikkuna) { p.textContent = ''; const c = el('div', 'km-col'); c.appendChild(tyhja('Datajako-lisäosa ei ole päällä tässä selaimessa.')); p.appendChild(c); return; }
     const uusi = u.ikkuna.parentElement !== p; if (uusi) { p.textContent = ''; p.appendChild(u.ikkuna); }
     Object.assign(u.ikkuna.style, { position: 'relative', left: '0', top: '0', right: 'auto', bottom: 'auto', width: '100%', height: '100%', display: '', transform: 'none', zIndex: 'auto', maxWidth: 'none' });
-    p.classList.add('dj');
     if (u.avaaja) u.avaaja.style.display = 'none';
     // avaa() piirtää Datajakon uudelleen: vain kun välilehti tulee näkyviin, ei jokaisesta saapuvasta paketista
-    try { if (u.onPien && u.onPien()) u.pienenna(false); if (uusi || u.ikkuna.style.display === 'none' || !p.dataset.auki) { p.dataset.auki = '1'; u.avaa(); } } catch (e) {}
+    try { if (u.onPien && u.onPien()) u.pienenna(false); if (uusi || !p.dataset.auki) { p.dataset.auki = '1'; u.avaa(); } } catch (e) {}
   }
 })();
