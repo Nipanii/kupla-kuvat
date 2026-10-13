@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.6.0
+// @version      0.6.1
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/kupla-messenger.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/kupla-messenger.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -32,6 +32,8 @@
  *   jossa #282 on ajossa: vanha plugin ei tunne 9460:aa, joten liittyminen ei toimisi.
  *   Res 10:38: omat viestit oikealla, kanavan/ryhmän Mykistä (vain tämä selain), eikä Viestit-luku enää laske piilotettujen
  *   Datajako-huoneiden lukemattomia (haamuilmoitus).
+ *   0.6.1: pelin oma messenger (PR #287) on deployattu -> kun sen nappi on palkissa, tämä skripti vetäytyy kokonaan
+ *   (ei kahta messengeriä) ja Datajaon ikkuna ja oma 💬-nappi palaavat entiselleen.
  * MITEN: pelin React-tilaa ei saa ulkoa, joten skripti kääri clientin omat parserit (lukee jäsennetyt kentät heti parse():n jälkeen)
  *   ja lähettää clientin omilla paketeilla `conn.sendPacket(header, arvot)` (SocketConnection.ts:921). Kanavat (0.4.0)
  *   tarvitsevat messenger-pluginin ChannelServicen: foorumipaketit negatiivisella id:llä + omat paketit KH (9460-9466).
@@ -44,7 +46,7 @@
   const VW = window;
   if (VW.__kuplaMessenger) return; VW.__kuplaMessenger = true;
   // testiä varten uudelleenasennettava: käärityt parserit kutsuvat AINA viimeisintä käsittelijätaulua (VW.__km2K)
-  const VERSIO = '0.6.0';
+  const VERSIO = '0.6.1';
   // uudelleenasennus (testi) pysäyttää edellisen kopion ajastimet: vain uusin sukupolvi elää
   const SUKU = (VW.__km2Suku = (VW.__km2Suku || 0) + 1), elossa = () => VW.__km2Suku === SUKU;
   const ajoita = (f, ms) => { const h = setInterval(() => { if (!elossa()) return clearInterval(h); f(h); }, ms); return h; };
@@ -1150,8 +1152,25 @@
   const vaihda = k => { T.valilehti = k; T.dialogi = null; T.suhdeAuki = null; piirra(); };
   function avaaKetju(id) { T.aktiivinen = id; T.valilehti = 'viestit'; T.suljetut.delete(id); T.lukematta.delete(id); if (!T.auki) avaa(true); else piirra(); }
 
+  // Pelin oma messenger (PR #287, deployattu 13.10. ~12:00; Res 11:04 "merge userscript ja poistaa alapalkista kaverit ja maininnat")
+  // korvaa tämän skriptin. Kun sen nappi on palkissa, tämä vetäytyy kokonaan, ettei näy kahta messengeriä, ja Datajaon ikkuna ja
+  // oma 💬-nappi palaavat entiselleen (tyyli kuten Datajako 0.21.0 sen luo).
+  let vetaytynyt = false;
+  function vetayty() {
+    if (vetaytynyt) return; vetaytynyt = true; VW.__km2Suku = (VW.__km2Suku || 0) + 1;   // elossa() = false: ajastimet pysähtyvät
+    const u = djUI();
+    if (u && u.ikkuna && juuri && juuri.contains(u.ikkuna)) {
+      document.body.appendChild(u.ikkuna);
+      Object.assign(u.ikkuna.style, { position: 'fixed', right: '24px', bottom: '90px', left: '', top: '', zIndex: '402', width: '390px', height: '', transform: '', maxWidth: '', display: 'none' });
+    }
+    try { if (u && u.upotettu) u.upotettu(false); } catch (e) {}
+    if (u && u.avaaja) u.avaaja.style.display = '';
+    juuri && juuri.remove(); document.getElementById('km2-tyyli')?.remove(); document.querySelectorAll('.km2-nappi').forEach(e => e.remove());
+    loki('pelin oma messenger löytyi, kupla-messenger vetäytyy');
+  }
   // työkalupalkin nappi pelin omaan ikonisäiliöön; koko palkki voi syntyä uudelleen (ToolbarView), joten tarkistetaan 1,5 s välein
   function asennaNappi() {
+    if (document.querySelector('.toolbar-messenger-control')) { vetayty(); return; }
     if (nappi && document.body.contains(nappi)) return;
     const sailio = document.querySelector('.nitro-toolbar-main-icons');
     nappi = el('div', 'toolbar-control text-center km2-nappi', null, { title: 'Kaverit & viestit' });
