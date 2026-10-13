@@ -4,11 +4,11 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.4.0
+// @version      0.5.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/kupla-messenger.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/kupla-messenger.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
-// @description  Kaverit & viestit (v3-ulkoasu), kanavat, maininnat ja Datajako yhden napin takana.
+// @description  Kaverit & viestit (v3-ulkoasu), kanavat, ryhmät, maininnat ja Datajako yhden napin takana.
 // @kupla-oletus off
 // @author       re-lab
 // ==/UserScript==
@@ -23,6 +23,8 @@
  *   0.3.1: Res 08:47 "hahmojen päät on vinksallaan" -> päät pelin omalla piirtäjällä (90x130, hattuineen) kuten v3:ssa.
  *   0.4.0: Res 09:00 "foorumikanavat korvaa datajaon kanavat" -> Kanavat-osio käyttää messenger-pluginin kanavia (foorumipaketit
  *   negatiivisella id:llä, ChannelService). Jos palvelin ei vastaa, Datajaon kanavat kuten ennen.
+ *   0.5.0: Res 09:43-09:50 -> Ryhmät-osio messenger-pluginin ryhmille (tila 5 omat, 6 kutsut): luonti, jäsenlista, kaverin kutsu,
+ *   jäsenen poisto. Kutsu tulee yksityisviestinä (#ryhmakutsu:<id>) ja näkyy kortilla Liity/Hylkää-napein.
  * MITEN: pelin React-tilaa ei saa ulkoa, joten skripti kääri clientin omat parserit (lukee jäsennetyt kentät heti parse():n jälkeen)
  *   ja lähettää clientin omilla paketeilla `conn.sendPacket(header, arvot)` (SocketConnection.ts:921). Kanavat (0.4.0)
  *   tarvitsevat messenger-pluginin ChannelServicen: foorumipaketit negatiivisella id:llä + uudet 9417-9420 (liity/poistu/luo/poista).
@@ -35,7 +37,7 @@
   const VW = window;
   if (VW.__kuplaMessenger) return; VW.__kuplaMessenger = true;
   // testiä varten uudelleenasennettava: käärityt parserit kutsuvat AINA viimeisintä käsittelijätaulua (VW.__km2K)
-  const VERSIO = '0.4.0';
+  const VERSIO = '0.5.0';
   // uudelleenasennus (testi) pysäyttää edellisen kopion ajastimet: vain uusin sukupolvi elää
   const SUKU = (VW.__km2Suku = (VW.__km2Suku || 0) + 1), elossa = () => VW.__km2Suku === SUKU;
   const ajoita = (f, ms) => { const h = setInterval(() => { if (!elossa()) return clearInterval(h); f(h); }, ms); return h; };
@@ -116,8 +118,12 @@
   // ---------- kanavat: messenger-pluginin ChannelService (Res 13.10. 09:00 "foorumikanavat korvaa datajaon kanavat") ----------
   // Kanava kulkee ryhmäfoorumin paketeissa negatiivisella id:llä: kanava 7 = foorumi -7, sen ainoa ketju = 7. Foorumilista: tila 3 = kaikki
   // kanavat, 4 = liitetyt. Vastaukset ovat foorumin omia paketteja (3001/3011/509/2049/324), joten pelin omat jäsentimet lukevat ne.
+  // Ryhmät (Res 13.10. 09:43 "kanavat ja ryhmät messengerissä ja niin et voidaan heivata datajako scriptit"): yksityinen kanava samoilla
+  // paketeilla. Tila 5 = omat ryhmät, 6 = kutsut. Kutsu tulee yksityisviestinä joka päättyy "#ryhmakutsu:<id>" (Res 09:50); 9417 hyväksyy,
+  // 9418 hylkää. 232 ketjulle 0 vastaa jäsenlistalla (509, threadId 0).
   // Ellei palvelin vastaa tilaan 3 (plugin ei asennettu), K.tuettu = false ja Kanavat-osio näyttää Datajaon kanavat kuten ennen.
-  const K = T.kanavat = { tuettu: null, kysytty: 0, lista: new Map(), liitetyt: new Set(), viestit: new Map(), hallinta: false, virhe: null, odottaa: 0, koukutettu: 0 };
+  const K = T.kanavat = { tuettu: null, kysytty: 0, lista: new Map(), liitetyt: new Set(), viestit: new Map(), hallinta: false, virhe: null, odottaa: 0, koukutettu: 0,
+    ryhmat: new Set(), kutsut: new Map(), jasenet: new Map(), toimi: 0 };
   const kopioiKanava = d => ({ id: -d.groupId, nimi: d.name, kuvaus: d.description || '', yhteensa: d.totalMessages, lukematta: d.unreadMessages,
     viimeinen: d.lastMessageAuthorId > 0 ? { nimi: d.lastMessageAuthorName, t: Date.now() - d.lastMessageTimeAsSecondsAgo * 1000 } : null });
   const kopioiKanavaViesti = m => ({ id: m.messageId, ind: m.messageIndex, lahettajaId: m.authorId, nimi: m.authorName, asu: m.authorFigure,
@@ -129,34 +135,48 @@
   const paivitaKanava = k => K.lista.set(k.id, Object.assign(K.lista.get(k.id) || {}, k));
   const kanavaAuki = id => T.auki && T.valilehti === 'viestit' && T.aktiivinen === 'k:' + id;
   const KANAVA_KASITTELIJAT = {
-    3001: p => { if (p.listCode !== 3 && p.listCode !== 4) return; K.tuettu = true; const l = (p.forums || []).map(kopioiKanava);
-      if (p.listCode === 3) { if (p.startIndex === 0) { const ennen = new Set(K.lista.keys()); for (const k of l) ennen.delete(k.id); for (const id of ennen) K.lista.delete(id); } }
-      else { if (p.startIndex === 0) K.liitetyt.clear(); for (const k of l) K.liitetyt.add(k.id); }
+    3001: p => { if (p.listCode < 3 || p.listCode > 6) return; K.tuettu = true; const l = (p.forums || []).map(kopioiKanava), alku = p.startIndex === 0;
+      if (p.listCode === 3) { if (alku) { const ennen = new Set([...K.lista.values()].filter(k => !k.ryhma).map(k => k.id)); for (const k of l) ennen.delete(k.id); for (const id of ennen) K.lista.delete(id); } }
+      else if (p.listCode === 4) { if (alku) K.liitetyt.clear(); for (const k of l) K.liitetyt.add(k.id); }
+      else if (p.listCode === 5) { if (alku) { for (const id of K.ryhmat) if (!l.some(k => k.id === id)) K.lista.delete(id); K.ryhmat.clear(); } for (const k of l) { k.ryhma = true; K.ryhmat.add(k.id); } }
+      else { if (alku) K.kutsut.clear(); for (const k of l) K.kutsut.set(k.id, k); return; }   // kutsu ei ole vielä ryhmä: ei K.listaan
       l.forEach(paivitaKanava); },
-    3011: p => { const d = p.extendedForumData; if (!d || d.groupId >= 0) return; K.tuettu = true; K.hallinta = !!d.isStaf; paivitaKanava(kopioiKanava(d)); },
-    509: p => { if (p.groupId >= 0) return; const id = -p.groupId; kanavaViestit(id, (p.messages || []).map(kopioiKanavaViesti)); if (kanavaAuki(id)) merkitseKanavaLuetuksi(id); },
+    // isStaf = canModerate: kanavalla acc_channels_manage (K.hallinta), ryhmällä omistaja tai staff (ryhmän oma k.moderoi)
+    3011: p => { const d = p.extendedForumData; if (!d || d.groupId >= 0) return; K.tuettu = true; const k = kopioiKanava(d);
+      if (K.ryhmat.has(k.id)) k.moderoi = !!d.isStaf; else K.hallinta = !!d.isStaf; paivitaKanava(k); },
+    509: p => { if (p.groupId >= 0) return; const id = -p.groupId;
+      if (p.threadId === 0) { K.jasenet.set(id, (p.messages || []).map(m => ({ id: m.authorId, nimi: m.authorName, asu: m.authorFigure, t: Date.now() - m.creationTime * 1000 }))); return; }
+      kanavaViestit(id, (p.messages || []).map(kopioiKanavaViesti)); if (kanavaAuki(id)) merkitseKanavaLuetuksi(id); },
     2049: p => { if (p.groupId >= 0 || !p.message) return; const id = -p.groupId, v = kopioiKanavaViesti(p.message); kanavaViestit(id, [v]);
-      K.liitetyt.add(id); const k = K.lista.get(id);
+      if (!K.ryhmat.has(id)) K.liitetyt.add(id); const k = K.lista.get(id);
       if (k) { k.yhteensa = Math.max(k.yhteensa || 0, v.ind + 1); k.viimeinen = { nimi: v.nimi, t: v.t, teksti: v.teksti };
         if (v.lahettajaId !== oma().id && !kanavaAuki(id)) k.lukematta = (k.lukematta || 0) + 1; }
       if (kanavaAuki(id)) merkitseKanavaLuetuksi(id); },
     324: p => { if (p.groupId >= 0 || !p.message) return; kanavaViestit(-p.groupId, [kopioiKanavaViesti(p.message)]); },
     // 1004 virheraportti: 400 viesti/nimi, 403 ei oikeutta tai mykistetty, 404 kanavaa ei ole. Kohdistetaan vain juuri tehtyyn kanavatoimeen.
-    1004: p => { if (K.odottaa && Date.now() - K.odottaa < 4000) { K.virhe = { koodi: p.errorCode, t: Date.now() }; K.odottaa = 0; } },
+    1004: p => { if (K.odottaa && Date.now() - K.odottaa < 4000) { K.virhe = { koodi: p.errorCode, t: Date.now(), toimi: K.toimi }; K.odottaa = 0; } },
   };
-  function kysyKanavat() { K.kysytty = Date.now(); laheta(873, [3, 0, 20]); laheta(873, [4, 0, 20]); }
-  function avaaKanava(id) { const k = K.lista.get(id); laheta(3149, [-id]); laheta(232, [-id, id, Math.max(0, ((k && k.yhteensa) || 0) - 50), 50]); }
+  function kysyKanavat() { K.kysytty = Date.now(); for (const tila of [3, 4, 5, 6]) laheta(873, [tila, 0, 20]); }
+  function avaaKanava(id) { const k = K.lista.get(id); laheta(3149, [-id]); laheta(232, [-id, id, Math.max(0, ((k && k.yhteensa) || 0) - 50), 50]);
+    if (K.ryhmat.has(id)) laheta(232, [-id, 0, 0, 100]); }
   function merkitseKanavaLuetuksi(id) {
     const l = K.viestit.get(id) || [], v = l[l.length - 1], k = K.lista.get(id); if (k) k.lukematta = 0;
-    if (K.liitetyt.has(id)) laheta(1855, [1, -id, v ? v.id : 0, !v]);
+    if (K.liitetyt.has(id) || K.ryhmat.has(id)) laheta(1855, [1, -id, v ? v.id : 0, !v]);
   }
-  const kanavaToimi = (h, arvot) => { K.odottaa = Date.now(); K.virhe = null; return laheta(h, arvot); };
+  const kanavaToimi = (h, arvot) => { K.odottaa = Date.now(); K.virhe = null; K.toimi = h; return laheta(h, arvot); };
   const lahetaKanavaan = (id, teksti) => kanavaToimi(3529, [-id, id, '', teksti]);
   const liityKanavaan = id => { K.liitetyt.add(id); kanavaToimi(9417, [id]); };
   const poistuKanavasta = id => { K.liitetyt.delete(id); kanavaToimi(9418, [id]); };
   const luoKanava = (nimi, kuvaus) => kanavaToimi(9419, [nimi, kuvaus]);
   const poistaKanava = id => kanavaToimi(9420, [id]);
   const moderoiKanavaViesti = (id, viestiId, tila) => kanavaToimi(286, [-id, id, viestiId, tila]);
+  const luoRyhma = (nimi, kuvaus) => kanavaToimi(9421, [nimi, kuvaus]);
+  const kutsuRyhmaan = (id, kaveriId) => kanavaToimi(9422, [id, kaveriId]);
+  const poistaJasen = (id, jasenId) => kanavaToimi(9423, [id, jasenId]);
+  // kutsu poistuu listalta vasta palvelimen tilan 6 listasta; vastattu estää tuplaklikkauksen siihen asti
+  const vastaaKutsuun = (id, kylla) => { const k = K.kutsut.get(id); if (k) k.vastattu = Date.now(); kanavaToimi(kylla ? 9417 : 9418, [id]); };
+  const poistuRyhmasta = id => kanavaToimi(9418, [id]);
+  const ryhmaKutsu = teksti => { const m = /#ryhmakutsu:(\d+)\s*$/.exec(teksti || ''); if (!m) return null; const n = /"([^"]{1,32})"/.exec(teksti); return { id: +m[1], nimi: n ? n[1] : '#' + m[1] }; };
 
   function koukuta() {
     const c = yhteys(); if (!c) return false;
@@ -170,7 +190,7 @@
   ajoita(h => { if (koukuta()) { clearInterval(h); rakennaUI(); } }, 150);
   // kaverilista: jos skripti latautui vasta listan jälkeen, pyydetään uudelleen (peli yhdistää kaverit id:llä, useFriends.ts:255-267)
   ajoita(() => { if (T.koukutettu && !T.kaverilistaSaatu && Date.now() - T.koukutettu > 8000) { T.kaverilistaSaatu = -1; laheta(2781, []); loki('kaverilista pyydetty uudelleen (2781)'); } }, 2000);
-  // kanavat: koukut (uudelleen kunnes kaikki 6 löytyvät), sitten kysely tiloilla 3 ja 4. Ei vastausta 6 s -> plugin ei ole palvelimella.
+  // kanavat: koukut (uudelleen kunnes kaikki 6 löytyvät), sitten kysely tiloilla 3-6. Ei vastausta 6 s -> plugin ei ole palvelimella.
   ajoita(h => { if (!T.koukutettu) return; if (!K.koukutettu) { koukuta(); if (!K.koukutettu) return; }
     if (!K.kysytty) { kysyKanavat(); return; }
     if (K.tuettu === null && Date.now() - K.kysytty > 6000) { K.tuettu = false; loki('kanavat: palvelin ei vastannut foorumilistan tilaan 3 -> Datajaon kanavat'); paivitaPian(); }
@@ -1043,6 +1063,16 @@
 #km2 .km-sec .km-sec-ohje{margin-left:auto;font-weight:normal;letter-spacing:0;text-transform:none;font-size:10.5px}
 #km2 .km-txt .km-mod{margin-left:8px;font-size:10.5px;color:#7f92aa;cursor:pointer;text-decoration:underline}
 #km2 .km-txt.km-piilossa{font-style:italic;color:#7f92aa}
+#km2 .km-row.is-kutsu{cursor:default}
+#km2 .km-kutsu-napit{display:flex;gap:6px;align-items:center;margin-top:6px}
+#km2 .km-row.is-kutsu .km-kutsu-napit{margin-top:0}
+#km2 .km-kutsu-napit .km-btn{height:24px;min-width:0;padding:0 10px;font-size:11px}
+#km2 .km-dialog.km-dialog-jasenet{max-height:calc(100% - 24px);overflow:auto}
+#km2 .km-jasenet{flex:0 0 auto;max-height:150px;overflow:auto;margin:6px 0;display:flex;flex-direction:column;gap:2px}
+#km2 .km-jasen{display:flex;align-items:center;gap:8px;padding:2px 0}
+#km2 .km-jasen .km-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#km2 .km-jasen .km-mod{font-size:11px;color:#7f92aa;cursor:pointer;text-decoration:underline}
+#km2 .km-dialog .km-virhe{color:#e8a0a0;font-size:12px;margin:6px 0 0}
 #km2 .km-tulossa{padding:8px 14px;border-top:1px solid #22364f;color:#7f92aa;font-size:12px}
 #km2 .km-x{width:10px;height:12px}
 #km2 .km-av .avatar-image.km-alku{display:flex;align-items:center;justify-content:center;color:#9fb3c8;font-weight:bold;font-size:15px;background:none!important}
@@ -1197,7 +1227,7 @@
       r.onclick = () => { T.aktiivinen = k.id; piirra(); };
       r.appendChild(avatar(f.asu, { paikalla: aito ? f.paikalla : undefined, nimi: f.nimi }));
       const nm = el('div', 'km-nm'); nm.appendChild(el('span', 'km-name', f.nimi));
-      const v = k.viim; nm.appendChild(el('small', null, v ? (v.oma ? 'Sinä: ' : '') + (v.kutsu ? 'Kutsu huoneeseen' : v.teksti) : ''));
+      const v = k.viim; nm.appendChild(el('small', null, v ? (v.oma ? 'Sinä: ' : '') + (v.kutsu ? 'Kutsu huoneeseen' : ryhmaKutsu(v.teksti) ? 'Kutsu ryhmään' : v.teksti) : ''));
       const meta = el('div', 'km-row-meta'); meta.appendChild(el('time', null, v ? listaAika(v.t) : ''));
       const m = merkkiEl(aktiivi ? 0 : (T.lukematta.get(k.id) || 0)); if (m) meta.appendChild(m);
       r.append(nm, meta); sc.appendChild(r);
@@ -1205,12 +1235,13 @@
     const yv = dj ? dj.filter(h => h.tyyppi === 'yv') : [];
     for (const h of yv) sc.appendChild(djRivi(h));
     if (!lista.length && !yv.length) sc.appendChild(el('div', 'km-empty is-inline', 'Ei vielä keskusteluja. Aloita Kaverit-välilehdeltä.'));
-    const ryhmaOts = el('div', 'km-sec', 'Ryhmät');
+    if (T.kanavat.tuettu) ryhmaSektio(sc);   // palvelimen ryhmät korvaavat Datajaon ryhmät (Res 09:43)
+    else { const ryhmaOts = el('div', 'km-sec', 'Ryhmät');
     if (dj) { const u = el('span', 'km-sec-action', '+ Uusi', { role: 'button', title: 'Uusi ryhmä tai liity salasanalla' });
       u.onclick = () => { const y = dj.find(h => h.tyyppi === 'yhteinen'); if (y) T.aktiivinen = 'dj:' + y.id; piirra(); const ui = djUI(); if (ui && ui.uusi) ui.uusi(); }; ryhmaOts.appendChild(u); }
     sc.appendChild(ryhmaOts);
     if (!dj) sc.appendChild(el('div', 'km-empty is-inline', 'Ryhmät ja kanavat tulevat Datajako-lisäosasta (0.21.0 tai uudempi).'));
-    else { const r = dj.filter(h => h.tyyppi === 'ryhma'); if (!r.length) sc.appendChild(el('div', 'km-empty is-inline', 'Ei ryhmiä. Uusi ryhmä toimii salasanalla.')); r.forEach(h => sc.appendChild(djRivi(h))); }
+    else { const r = dj.filter(h => h.tyyppi === 'ryhma'); if (!r.length) sc.appendChild(el('div', 'km-empty is-inline', 'Ei ryhmiä. Uusi ryhmä toimii salasanalla.')); r.forEach(h => sc.appendChild(djRivi(h))); } }
     if (T.kanavat.tuettu) kanavaSektio(sc);   // palvelimen kanavat korvaavat Datajaon kanavat (Res 09:00)
     else { sc.appendChild(el('div', 'km-sec', 'Kanavat'));
       if (dj) dj.filter(h => h.tyyppi === 'yhteinen' || h.tyyppi === 'kanava').forEach(h => sc.appendChild(djRivi(h)));
@@ -1221,13 +1252,20 @@
   // Rivi sivupalkissa, kanavan oma paneeli ja uuden kanavan dialogi (vain kun 3011 kertoi oikeudesta: isStaf = acc_channels_manage).
   const KANAVA_VIRHEET = { 400: 'Viesti tai nimi ei kelpaa (viesti 1-255 merkkiä, nimi 2-32).', 403: 'Ei oikeutta, tai olet mykistetty.',
     404: 'Kanavaa ei löydy.', 500: 'Palvelinvirhe, yritä uudelleen.' };
-  const kanavaLukematta = () => T.kanavat.tuettu ? [...T.kanavat.lista.values()].reduce((a, k) => a + (T.kanavat.liitetyt.has(k.id) ? k.lukematta || 0 : 0), 0) : 0;
-  const risuAvatar = () => { const w = el('div', 'km-avw'); w.appendChild(el('div', 'km-av km-djav', '#')); return w; };
+  // sama koodi tarkoittaa eri asiaa eri toimessa: avain "<paketti>:<koodi>" (K.toimi = viimeisin kanavaToimi)
+  const RYHMA_VIRHEET = { '9421:400': 'Nimi 2-32 merkkiä (kirjaimet, numerot, välilyönti, - ja _).', '9421:403': 'Sinulla on jo 10 ryhmää. Poista jokin ennen uuden luomista.',
+    '9422:403': 'Kutsun voi lähettää vain kaverille, ja ryhmällä voi olla enintään 50 avointa kutsua.', '9422:400': 'Hän on jo jäsen, tai kutsu odottaa jo vastausta.',
+    '9417:404': 'Kutsua ei enää ole.', '9417:400': 'Olet jo ryhmän jäsen.', '9418:400': 'Omistaja ei voi poistua. Poista ryhmä, jos haluat lopettaa sen.',
+    '9423:404': 'Häntä ei löydy ryhmästä eikä kutsuista.', '9420:404': 'Ryhmää ei löydy.' };
+  const virheTeksti = v => RYHMA_VIRHEET[v.toimi + ':' + v.koodi] || KANAVA_VIRHEET[v.koodi] || 'Virhe ' + v.koodi;
+  const tuoreVirhe = () => { const v = T.kanavat.virhe; return v && Date.now() - v.t < 15000 ? v : null; };
+  const kanavaLukematta = () => T.kanavat.tuettu ? [...T.kanavat.lista.values()].reduce((a, k) => a + (T.kanavat.liitetyt.has(k.id) || T.kanavat.ryhmat.has(k.id) ? k.lukematta || 0 : 0), 0) : 0;
+  const risuAvatar = ryhma => { const w = el('div', 'km-avw'); w.appendChild(el('div', 'km-av km-djav' + (ryhma ? ' is-ryhma' : ''), ryhma ? '' : '#')); return w; };
   function kanavaRivi(k) {
-    const aktiivi = T.aktiivinen === 'k:' + k.id, liitetty = T.kanavat.liitetyt.has(k.id);
+    const aktiivi = T.aktiivinen === 'k:' + k.id, liitetty = !!k.ryhma || T.kanavat.liitetyt.has(k.id);
     const r = el('div', 'km-row' + (aktiivi ? ' is-active' : '') + (liitetty ? '' : ' is-offline'), null, { role: 'button', tabindex: '0' });
     r.onclick = () => { T.aktiivinen = 'k:' + k.id; avaaKanava(k.id); piirra(); };
-    r.appendChild(risuAvatar());
+    r.appendChild(risuAvatar(k.ryhma));
     const nm = el('div', 'km-nm'); nm.appendChild(el('span', 'km-name', k.nimi));
     // listan 3001/3011 ei kanna viestin tekstiä: otetaan se ladatusta ketjusta, jos viimeinen näkyvä viesti on siellä
     const l = T.kanavat.viestit.get(k.id) || [], vv = l.filter(x => x.tila === 0).slice(-1)[0];
@@ -1240,23 +1278,60 @@
   function kanavaSektio(sc) {
     const K = T.kanavat, ots = el('div', 'km-sec', 'Kanavat'); sc.appendChild(ots);
     if (K.hallinta) { const u = el('span', 'km-sec-action', '+ Uusi', { role: 'button', title: 'Uusi kanava' }); u.onclick = () => { T.dialogi = 'uusiKanava'; piirra(); }; ots.appendChild(u); }
-    const l = [...K.lista.values()].sort((a, b) => (K.liitetyt.has(b.id) - K.liitetyt.has(a.id)) || String(a.nimi).localeCompare(String(b.nimi), 'fi'));
+    const l = [...K.lista.values()].filter(k => !k.ryhma).sort((a, b) => (K.liitetyt.has(b.id) - K.liitetyt.has(a.id)) || String(a.nimi).localeCompare(String(b.nimi), 'fi'));
     if (!l.length) sc.appendChild(el('div', 'km-empty is-inline', 'Ei vielä kanavia.'));
     l.forEach(k => sc.appendChild(kanavaRivi(k)));
   }
+  // ---------- Ryhmät (palvelimen yksityiset kanavat; Res 13.10. 09:43-09:50) ----------
+  function ryhmaSektio(sc) {
+    const K = T.kanavat, ots = el('div', 'km-sec', 'Ryhmät'); sc.appendChild(ots);
+    const u = el('span', 'km-sec-action', '+ Uusi', { role: 'button', title: 'Uusi ryhmä' }); u.onclick = () => { T.dialogi = 'uusiRyhma'; piirra(); }; ots.appendChild(u);
+    for (const k of K.kutsut.values()) sc.appendChild(kutsuRivi(k));
+    const v = tuoreVirhe(); if (v && (v.toimi === 9417 || v.toimi === 9418) && !onKanava(T.aktiivinen)) sc.appendChild(el('div', 'km-empty is-inline', virheTeksti(v)));
+    const l = [...K.ryhmat].map(id => K.lista.get(id)).filter(Boolean).sort((a, b) => String(a.nimi).localeCompare(String(b.nimi), 'fi'));
+    if (!l.length && !K.kutsut.size) sc.appendChild(el('div', 'km-empty is-inline', 'Ei ryhmiä. Luo ryhmä ja kutsu kavereita.'));
+    l.forEach(k => sc.appendChild(kanavaRivi(k)));
+  }
+  const kutsuNapit = id => { const k = T.kanavat.kutsut.get(id), odottaa = k && k.vastattu && Date.now() - k.vastattu < 5000, r = el('div', 'km-kutsu-napit');
+    const ok = nappiEl('is-primary', 'Liity', null, () => { vastaaKutsuun(id, true); piirra(); }), ei = nappiEl('', 'Hylkää', null, () => { vastaaKutsuun(id, false); piirra(); });
+    ok.disabled = ei.disabled = !!odottaa; r.append(ok, ei); return r; };
+  function kutsuRivi(k) {
+    const r = el('div', 'km-row is-kutsu'); r.appendChild(risuAvatar(true));
+    const nm = el('div', 'km-nm'); nm.appendChild(el('span', 'km-name', k.nimi)); nm.appendChild(el('small', null, 'Kutsu'));
+    r.append(nm, kutsuNapit(k.id)); return r;
+  }
+  // Yksityisviesti joka päättyy "#ryhmakutsu:<id>": kortti hyväksyntänapeilla. Tila tulee palvelimen listoista, ei viestistä.
+  function kutsuKortti(rk, kutsuja, t) {
+    const K = T.kanavat, s = el('div', 'km-sys is-invite'); s.appendChild(el('span', 'messenger-notification-icon flex-shrink-0'));
+    const tx = el('div', 'km-sys-text'), nimi = (K.kutsut.get(rk.id) || K.lista.get(rk.id) || rk).nimi;
+    tx.appendChild(el('b', null, 'Ryhmäkutsu')); tx.appendChild(document.createTextNode(' (' + klo(t) + '): ' + kutsuja + ' kutsui sinut ryhmään ' + nimi + '.'));
+    if (K.kutsut.has(rk.id)) tx.appendChild(kutsuNapit(rk.id));
+    else if (K.ryhmat.has(rk.id)) { const r = el('div', 'km-kutsu-napit'); r.appendChild(nappiEl('', 'Avaa ryhmä', null, () => { T.aktiivinen = 'k:' + rk.id; avaaKanava(rk.id); piirra(); })); tx.appendChild(r); }
+    else tx.appendChild(el('div', null, K.tuettu ? 'Kutsu ei ole enää voimassa.' : 'Ryhmät eivät ole vielä käytössä tällä palvelimella.'));
+    s.appendChild(tx); return s;
+  }
   function kanavaPaneeli(id) {
-    const K = T.kanavat, k = K.lista.get(id) || { id, nimi: '#' + id, kuvaus: '' }, l = K.viestit.get(id) || [], liitetty = K.liitetyt.has(id);
+    const K = T.kanavat, k = K.lista.get(id) || { id, nimi: '#' + id, kuvaus: '' }, l = K.viestit.get(id) || [], onRyhma = !!k.ryhma, liitetty = onRyhma || K.liitetyt.has(id);
+    // omistaja = jäsenlistan ensimmäinen (palvelin järjestää liittymisajan mukaan, ja omistaja liittyy luodessaan); palvelin tarkistaa joka tapauksessa
+    const jasenet = K.jasenet.get(id) || [], omistaja = onRyhma && jasenet.length > 0 && jasenet[0].id === oma().id, moderoi = onRyhma ? !!k.moderoi : K.hallinta;
     const main = el('div', 'km-main');
-    const mh = el('div', 'km-mh'); mh.appendChild(risuAvatar());
-    const otsikko = el('div', 'km-mh-title'); otsikko.appendChild(el('b', null, k.nimi)); otsikko.appendChild(el('span', null, k.kuvaus || (liitetty ? 'Liittynyt' : 'Et ole liittynyt')));
+    const mh = el('div', 'km-mh'); mh.appendChild(risuAvatar(onRyhma));
+    const otsikko = el('div', 'km-mh-title'); otsikko.appendChild(el('b', null, k.nimi));
+    otsikko.appendChild(el('span', null, k.kuvaus || (onRyhma ? (jasenet.length ? jasenet.length + ' jäsentä' : 'Ryhmä') : liitetty ? 'Liittynyt' : 'Et ole liittynyt')));
     const toim = el('div', 'km-mh-actions');
-    toim.appendChild(nappiEl(liitetty ? '' : 'is-primary', liitetty ? 'Poistu' : 'Liity', null, () => { liitetty ? poistuKanavasta(id) : liityKanavaan(id); piirra(); }));
-    if (K.hallinta) { const pk = nappiEl('is-square', null, 'remove', () => { T.dialogi = 'poistaKanava'; piirra(); }); pk.title = 'Poista kanava'; pk.setAttribute('aria-label', 'Poista kanava'); toim.appendChild(pk); }
+    if (onRyhma) {
+      toim.appendChild(nappiEl('', 'Jäsenet', null, () => { T.dialogi = 'jasenet'; laheta(232, [-id, 0, 0, 100]); piirra(); }));
+      if (!omistaja) toim.appendChild(nappiEl('', 'Poistu', null, () => { poistuRyhmasta(id); piirra(); }));
+      if (omistaja || K.hallinta) { const pk = nappiEl('is-square', null, 'remove', () => { T.dialogi = 'poistaKanava'; piirra(); }); pk.title = 'Poista ryhmä'; pk.setAttribute('aria-label', 'Poista ryhmä'); toim.appendChild(pk); }
+    } else {
+      toim.appendChild(nappiEl(liitetty ? '' : 'is-primary', liitetty ? 'Poistu' : 'Liity', null, () => { liitetty ? poistuKanavasta(id) : liityKanavaan(id); piirra(); }));
+      if (K.hallinta) { const pk = nappiEl('is-square', null, 'remove', () => { T.dialogi = 'poistaKanava'; piirra(); }); pk.title = 'Poista kanava'; pk.setAttribute('aria-label', 'Poista kanava'); toim.appendChild(pk); }
+    }
     const sk = nappiEl('is-square', null, risti(), () => { T.aktiivinen = null; piirra(); }); sk.title = 'Sulje kanava'; sk.setAttribute('aria-label', 'Sulje kanava');
     toim.appendChild(sk); mh.append(otsikko, toim);
     const msgs = el('div', 'km-msgs', null, { 'data-kmv': 'kanava-' + id, 'data-kmv-alas': '1' });
     const huom = el('div', 'km-sys is-notice'); huom.appendChild(el('span', 'nitro-friends-spritesheet icon-warning flex-shrink-0'));
-    huom.appendChild(el('div', 'km-sys-text', 'Kanavan viestit näkyvät kaikille. Henkilötietojen ja salasanan kertominen on sääntöjemme vastaista.'));
+    huom.appendChild(el('div', 'km-sys-text', (onRyhma ? 'Ryhmän viestit näkyvät vain jäsenille.' : 'Kanavan viestit näkyvät kaikille.') + ' Henkilötietojen ja salasanan kertominen on sääntöjemme vastaista.'));
     msgs.appendChild(huom);
     if (!l.length) msgs.appendChild(el('div', 'km-empty is-inline', k.yhteensa ? 'Haetaan viestejä...' : 'Ei vielä viestejä. Kirjoita ensimmäinen.'));
     const o = oma(); let edPaiva = '', edLahettaja = null, edT = 0, ryhma = null;
@@ -1272,22 +1347,22 @@
       }
       const piilossa = v.tila !== 0;
       const rivi = el('div', 'km-txt' + (piilossa ? ' km-piilossa' : ''), piilossa ? 'Viesti piilotettu' + (v.moderoija ? ' (' + v.moderoija + ')' : '') + (v.teksti ? ': ' + v.teksti : '') : v.teksti);
-      if (K.hallinta) { const mod = el('span', 'km-mod', piilossa ? 'Palauta' : 'Piilota', { role: 'button', title: piilossa ? 'Näytä viesti kaikille' : 'Piilota viesti muilta' });
+      if (moderoi) { const mod = el('span', 'km-mod', piilossa ? 'Palauta' : 'Piilota', { role: 'button', title: piilossa ? 'Näytä viesti kaikille' : 'Piilota viesti muilta' });
         mod.onclick = () => moderoiKanavaViesti(id, v.id, piilossa ? 0 : 20); rivi.appendChild(mod); }
       ryhma.appendChild(rivi); edT = v.t;
     }
-    if (K.virhe && Date.now() - K.virhe.t < 15000) { const s = el('div', 'km-sys is-notice'); s.appendChild(el('div', 'km-sys-text', KANAVA_VIRHEET[K.virhe.koodi] || 'Virhe ' + K.virhe.koodi)); msgs.appendChild(s); }
+    if (tuoreVirhe() && T.dialogi !== 'jasenet') { const s = el('div', 'km-sys is-notice'); s.appendChild(el('div', 'km-sys-text', virheTeksti(K.virhe))); msgs.appendChild(s); }
     const inp = el('div', 'km-inp'), avain = 'k:' + id;
-    const kentta = el('input', null, null, { type: 'text', maxlength: '255', placeholder: 'Viesti kanavalle ' + k.nimi, 'data-km': 'kanava-' + id }); kentta.value = T.luonnos.get(avain) || '';
+    const kentta = el('input', null, null, { type: 'text', maxlength: '255', placeholder: (onRyhma ? 'Viesti ryhmälle ' : 'Viesti kanavalle ') + k.nimi, 'data-km': 'kanava-' + id }); kentta.value = T.luonnos.get(avain) || '';
     const laskuri = el('span', 'km-counter'); const lb = nappiEl('is-primary', 'Lähetä');
     const paivLaskuri = () => { const n = kentta.value.length; laskuri.textContent = n + '/255'; laskuri.style.display = n >= 200 ? '' : 'none'; laskuri.classList.toggle('is-full', n >= 255); lb.disabled = !kentta.value.trim(); };
     kentta.addEventListener('input', () => { T.luonnos.set(avain, kentta.value); paivLaskuri(); });
     // ei omaa kaikua: palvelin työntää uuden viestin (2049) myös lähettäjälle, ja virheestä tulee 1004
-    const tee = () => { const teksti = kentta.value.trim().slice(0, 255); if (!teksti) return; lahetaKanavaan(id, teksti); K.liitetyt.add(id); T.luonnos.delete(avain); kentta.value = ''; piirra(); };
+    const tee = () => { const teksti = kentta.value.trim().slice(0, 255); if (!teksti) return; lahetaKanavaan(id, teksti); if (!onRyhma) K.liitetyt.add(id); T.luonnos.delete(avain); kentta.value = ''; piirra(); };
     kentta.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); tee(); } });
     lb.onclick = tee; paivLaskuri(); inp.append(kentta, laskuri, lb);
     main.append(mh, msgs, inp);
-    if (T.dialogi === 'uusiKanava' || T.dialogi === 'poistaKanava') main.appendChild(kanavaDialogi(id));
+    if (['uusiKanava', 'poistaKanava', 'uusiRyhma', 'jasenet'].includes(T.dialogi)) main.appendChild(kanavaDialogi(id));
     return main;
   }
   function kanavaDialogi(id) {
@@ -1296,19 +1371,51 @@
     const peru = nappiEl('', 'Peruuta', null, () => { T.dialogi = null; piirra(); }), r = el('div', 'km-dialog-actions');
     if (T.dialogi === 'poistaKanava') {
       const k = T.kanavat.lista.get(id) || { nimi: '#' + id };
-      d.append(el('h3', null, 'Poista kanava'), el('p', null, 'Kanava ' + k.nimi + ' katoaa kaikilta. Viestit jäävät tietokantaan.'));
+      d.append(el('h3', null, k.ryhma ? 'Poista ryhmä' : 'Poista kanava'), el('p', null, (k.ryhma ? 'Ryhmä ' + k.nimi + ' katoaa kaikilta jäseniltä.' : 'Kanava ' + k.nimi + ' katoaa kaikilta.') + ' Viestit jäävät tietokantaan.'));
       r.append(peru, nappiEl('is-danger', 'Poista', null, () => { poistaKanava(id); T.dialogi = null; T.aktiivinen = null; piirra(); }));
       d.appendChild(r);
+    } else if (T.dialogi === 'jasenet') {
+      jasenDialogi(d, id); r.appendChild(nappiEl('', 'Sulje', null, () => { T.dialogi = null; piirra(); })); d.appendChild(r);
     } else {
-      d.append(el('h3', null, 'Uusi kanava'), el('p', null, 'Nimi 2-32 merkkiä (kirjaimet, numerot, välilyönti, - ja _). Kuvaus vapaaehtoinen.'));
+      const ryhmaksi = T.dialogi === 'uusiRyhma';
+      d.append(el('h3', null, ryhmaksi ? 'Uusi ryhmä' : 'Uusi kanava'), el('p', null, 'Nimi 2-32 merkkiä (kirjaimet, numerot, välilyönti, - ja _). Kuvaus vapaaehtoinen.'
+        + (ryhmaksi ? ' Ryhmän näkevät vain jäsenet, ja kaverit liittyvät kutsusta. Voit omistaa enintään 10 ryhmää.' : '')));
       const nimi = el('input', null, null, { type: 'text', maxlength: '32', placeholder: 'Nimi', 'data-km': 'kanava-nimi' }); nimi.value = T.kanavaNimi || '';
       const kuvaus = el('input', null, null, { type: 'text', maxlength: '255', placeholder: 'Kuvaus', 'data-km': 'kanava-kuvaus' }); kuvaus.value = T.kanavaKuvaus || '';
-      const ok = nappiEl('is-primary', 'Luo kanava', null, () => { const n = nimi.value.trim(); if (n.length < 2) return; luoKanava(n, kuvaus.value.trim()); T.kanavaNimi = ''; T.kanavaKuvaus = ''; T.dialogi = null; piirra(); });
+      const ok = nappiEl('is-primary', ryhmaksi ? 'Luo ryhmä' : 'Luo kanava', null, () => { const n = nimi.value.trim(); if (n.length < 2) return;
+        (ryhmaksi ? luoRyhma : luoKanava)(n, kuvaus.value.trim()); T.kanavaNimi = ''; T.kanavaKuvaus = ''; T.dialogi = null; piirra(); });
       const tila = () => { T.kanavaNimi = nimi.value; T.kanavaKuvaus = kuvaus.value; ok.disabled = nimi.value.trim().length < 2; };
       nimi.addEventListener('input', tila); kuvaus.addEventListener('input', tila); tila();
       r.append(peru, ok); d.append(nimi, kuvaus, r);
     }
     ov.appendChild(d); return ov;
+  }
+  // Jäsenet ja kutsu: omistaja (tai staff) poistaa jäseniä ja kutsuu kavereita. Kutsu lähtee yksityisviestinä palvelimelta (9422).
+  function jasenDialogi(d, id) {
+    const K = T.kanavat, k = K.lista.get(id) || { nimi: '#' + id }, jasenet = K.jasenet.get(id) || [], o = oma();
+    const hallitsee = (jasenet.length > 0 && jasenet[0].id === o.id) || K.hallinta;
+    d.classList.add('km-dialog-jasenet');
+    d.appendChild(el('h3', null, k.nimi + ' - jäsenet' + (jasenet.length ? ' (' + jasenet.length + ')' : '')));
+    const lista = el('div', 'km-jasenet');
+    jasenet.forEach((j, i) => { const r = el('div', 'km-jasen'); r.appendChild(avatar(j.asu, { nimi: j.nimi })); r.appendChild(el('span', 'km-name', j.nimi + (i === 0 ? ' (omistaja)' : '')));
+      if (hallitsee && i > 0) { const x = el('span', 'km-mod', 'Poista', { role: 'button', title: 'Poista ryhmästä' }); x.onclick = () => poistaJasen(id, j.id); r.appendChild(x); }
+      lista.appendChild(r); });
+    if (!jasenet.length) lista.appendChild(el('div', 'km-empty is-inline', 'Haetaan jäseniä...'));
+    d.appendChild(lista);
+    if (hallitsee) {
+      d.appendChild(el('p', null, 'Kutsu kaveri. Kutsu menee hänelle yksityisviestinä, ja hän liittyy kun hyväksyy.'));
+      const haku = el('input', null, null, { type: 'text', maxlength: '32', placeholder: 'Hae kaveria', 'data-km': 'ryhma-kutsu-haku' }); haku.value = T.kutsuHaku || '';
+      const ehd = el('div', 'km-jasenet'), kutsutut = T.kutsutut || (T.kutsutut = new Set());
+      const paiv = () => { T.kutsuHaku = haku.value; ehd.textContent = ''; const q = haku.value.trim().toLowerCase(), jasen = new Set(jasenet.map(j => j.id));
+        const l = [...T.kaverit.values()].filter(f => !jasen.has(f.id) && (!q || f.nimi.toLowerCase().includes(q))).sort(nimiJarjestys).slice(0, 8);
+        for (const f of l) { const r = el('div', 'km-jasen'); r.appendChild(avatar(f.asu, { nimi: f.nimi, paikalla: f.paikalla })); r.appendChild(el('span', 'km-name', f.nimi));
+          const tehty = kutsutut.has(id + ':' + f.id), b = el('span', 'km-mod', tehty ? 'Kutsuttu' : 'Kutsu', { role: 'button' });
+          if (!tehty) b.onclick = () => { kutsuRyhmaan(id, f.id); kutsutut.add(id + ':' + f.id); paiv(); };
+          r.appendChild(b); ehd.appendChild(r); }
+        if (!l.length) ehd.appendChild(el('div', 'km-empty is-inline', q ? 'Ei kavereita haulla.' : 'Kaikki kaverisi ovat jo jäseniä.')); };
+      haku.addEventListener('input', paiv); paiv(); d.append(haku, ehd);
+    }
+    const v = tuoreVirhe(); if (v) d.appendChild(el('p', 'km-virhe', virheTeksti(v)));
   }
   function piirraViestit(p) {
     const lista = ketjuLista(), dj = djHuoneet();
@@ -1336,7 +1443,7 @@
       if (T.aktiivinen != null) p.appendChild(ketjuPaneeli(T.aktiivinen));
       else { const m = el('div', 'km-main'); m.appendChild(tyhja('Viestit näkyvät tässä, kun aloitat keskustelun.')); p.appendChild(m); }
     }
-    if (T.dialogi === 'uusiKanava' && !onKanava(T.aktiivinen)) p.appendChild(kanavaDialogi(0));
+    if ((T.dialogi === 'uusiKanava' || T.dialogi === 'uusiRyhma') && !onKanava(T.aktiivinen)) p.appendChild(kanavaDialogi(0));
   }
   function ketjuPaneeli(id) {
     const f = henkilo(id), aito = id > 0, l = T.ketjut.get(id) || [], o = oma();
@@ -1364,6 +1471,8 @@
       if (v.kutsu) { const s = el('div', 'km-sys is-invite'); s.appendChild(el('span', 'messenger-notification-icon flex-shrink-0'));
         const t = el('div', 'km-sys-text'); t.appendChild(el('b', null, 'Kutsu huoneeseen')); t.appendChild(document.createTextNode(' (' + klo(v.t) + '): ' + v.teksti));
         s.appendChild(t); msgs.appendChild(s); ryhma = null; continue; }
+      const rk = !v.oma && ryhmaKutsu(v.teksti);
+      if (rk) { msgs.appendChild(kutsuKortti(rk, f.nimi, v.t)); ryhma = null; continue; }
       const lahettaja = v.oma ? 'oma' : id;
       if (!ryhma || lahettaja !== edLahettaja || v.t - edT > 5 * 60e3) {
         const m = el('div', 'km-m' + (v.oma ? ' is-own' : ''));
