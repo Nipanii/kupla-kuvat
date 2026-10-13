@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.5.1
+// @version      0.5.2
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/kupla-messenger.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/kupla-messenger.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -27,6 +27,7 @@
  *   jäsenen poisto. Kutsu tulee yksityisviestinä (#ryhmakutsu:<id>) ja näkyy kortilla Liity/Hylkää-napein.
  *   0.5.1: ID-TÖRMÄYS: pluginin 9418 (poistu/hylkää) = utility RESET_RESPECT_POINTS, 9421 (uusi ryhmä) = catalog-progression.
  *   Niitä ei lähetetä, ja Poistu/Hylkää/Uusi ryhmä on piilossa kunnes plugin saa vapaat id:t.
+ *   0.5.2: Res 10:25 -> kanavan + Uusi näkyy myös kun kanavia ei vielä ole (oikeus selviää vasta kanavan 3011:stä).
  * MITEN: pelin React-tilaa ei saa ulkoa, joten skripti kääri clientin omat parserit (lukee jäsennetyt kentät heti parse():n jälkeen)
  *   ja lähettää clientin omilla paketeilla `conn.sendPacket(header, arvot)` (SocketConnection.ts:921). Kanavat (0.4.0)
  *   tarvitsevat messenger-pluginin ChannelServicen: foorumipaketit negatiivisella id:llä + uudet 9417-9420 (liity/poistu/luo/poista).
@@ -39,7 +40,7 @@
   const VW = window;
   if (VW.__kuplaMessenger) return; VW.__kuplaMessenger = true;
   // testiä varten uudelleenasennettava: käärityt parserit kutsuvat AINA viimeisintä käsittelijätaulua (VW.__km2K)
-  const VERSIO = '0.5.1';
+  const VERSIO = '0.5.2';
   // uudelleenasennus (testi) pysäyttää edellisen kopion ajastimet: vain uusin sukupolvi elää
   const SUKU = (VW.__km2Suku = (VW.__km2Suku || 0) + 1), elossa = () => VW.__km2Suku === SUKU;
   const ajoita = (f, ms) => { const h = setInterval(() => { if (!elossa()) return clearInterval(h); f(h); }, ms); return h; };
@@ -1284,8 +1285,11 @@
   }
   function kanavaSektio(sc) {
     const K = T.kanavat, ots = el('div', 'km-sec', 'Kanavat'); sc.appendChild(ots);
-    if (K.hallinta) { const u = el('span', 'km-sec-action', '+ Uusi', { role: 'button', title: 'Uusi kanava' }); u.onclick = () => { T.dialogi = 'uusiKanava'; piirra(); }; ots.appendChild(u); }
     const l = [...K.lista.values()].filter(k => !k.ryhma).sort((a, b) => (K.liitetyt.has(b.id) - K.liitetyt.has(a.id)) || String(a.nimi).localeCompare(String(b.nimi), 'fi'));
+    // oikeus selviää vasta kanavan 3011:stä, joten ilman yhtään kanavaa nappi näytetään kaikille (Res 10:25 "voin tehdä sen uusiks");
+    // ilman acc_channels_manage palvelin vastaa 403 ja virhe näkyy tässä
+    if (K.hallinta || !l.length) { const u = el('span', 'km-sec-action', '+ Uusi', { role: 'button', title: 'Uusi kanava' }); u.onclick = () => { T.dialogi = 'uusiKanava'; piirra(); }; ots.appendChild(u); }
+    const v = tuoreVirhe(); if (v && v.toimi === 9419 && !onKanava(T.aktiivinen)) sc.appendChild(el('div', 'km-empty is-inline', v.koodi === 403 ? 'Kanavan luonti vaatii oikeuden acc_channels_manage.' : virheTeksti(v)));
     if (!l.length) sc.appendChild(el('div', 'km-empty is-inline', 'Ei vielä kanavia.'));
     l.forEach(k => sc.appendChild(kanavaRivi(k)));
   }
