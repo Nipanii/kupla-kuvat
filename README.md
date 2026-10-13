@@ -31,3 +31,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/kuuma-laskuri-0510.png` — robon kuuma-laskuri ja nippu
 - `kuvat/sly-grillattu.jpg` — Harjis: Murray ja Le Paradox syövät grillattua Slyta
 - `kuvat/kirpputori-demo-1013.png` — Kirpputori-demo robon clientissa (PR #273, ei vielä livenä)
+- `kuvat/kirppari-myynti-ennen-1013.png` — Kirpparin myynti-ikkuna ennen korjausta (250 px)
