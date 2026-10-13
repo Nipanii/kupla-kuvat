@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.5.0
+// @version      0.5.1
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/kupla-messenger.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/kupla-messenger.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -25,6 +25,8 @@
  *   negatiivisella id:llä, ChannelService). Jos palvelin ei vastaa, Datajaon kanavat kuten ennen.
  *   0.5.0: Res 09:43-09:50 -> Ryhmät-osio messenger-pluginin ryhmille (tila 5 omat, 6 kutsut): luonti, jäsenlista, kaverin kutsu,
  *   jäsenen poisto. Kutsu tulee yksityisviestinä (#ryhmakutsu:<id>) ja näkyy kortilla Liity/Hylkää-napein.
+ *   0.5.1: ID-TÖRMÄYS: pluginin 9418 (poistu/hylkää) = utility RESET_RESPECT_POINTS, 9421 (uusi ryhmä) = catalog-progression.
+ *   Niitä ei lähetetä, ja Poistu/Hylkää/Uusi ryhmä on piilossa kunnes plugin saa vapaat id:t.
  * MITEN: pelin React-tilaa ei saa ulkoa, joten skripti kääri clientin omat parserit (lukee jäsennetyt kentät heti parse():n jälkeen)
  *   ja lähettää clientin omilla paketeilla `conn.sendPacket(header, arvot)` (SocketConnection.ts:921). Kanavat (0.4.0)
  *   tarvitsevat messenger-pluginin ChannelServicen: foorumipaketit negatiivisella id:llä + uudet 9417-9420 (liity/poistu/luo/poista).
@@ -37,7 +39,7 @@
   const VW = window;
   if (VW.__kuplaMessenger) return; VW.__kuplaMessenger = true;
   // testiä varten uudelleenasennettava: käärityt parserit kutsuvat AINA viimeisintä käsittelijätaulua (VW.__km2K)
-  const VERSIO = '0.5.0';
+  const VERSIO = '0.5.1';
   // uudelleenasennus (testi) pysäyttää edellisen kopion ajastimet: vain uusin sukupolvi elää
   const SUKU = (VW.__km2Suku = (VW.__km2Suku || 0) + 1), elossa = () => VW.__km2Suku === SUKU;
   const ajoita = (f, ms) => { const h = setInterval(() => { if (!elossa()) return clearInterval(h); f(h); }, ms); return h; };
@@ -163,7 +165,12 @@
     const l = K.viestit.get(id) || [], v = l[l.length - 1], k = K.lista.get(id); if (k) k.lukematta = 0;
     if (K.liitetyt.has(id) || K.ryhmat.has(id)) laheta(1855, [1, -id, v ? v.id : 0, !v]);
   }
-  const kanavaToimi = (h, arvot) => { K.odottaa = Date.now(); K.virhe = null; K.toimi = h; return laheta(h, arvot); };
+  // 🔴 ID-TÖRMÄYS (mitattu livenä 13.10. 10:20): palvelimella 9418 = utility-pluginin RESET_RESPECT_POINTS (staffilta nollaa KAIKKIEN
+  // respektit) ja 9421 = catalog-progressionin REQUEST_CATALOG_SPENDING_PROGRESSION. Messenger-plugin sai ne samat id:t (poistu, uusi
+  // ryhmä). Näitä ei lähetetä ennen kuin plugin saa vapaat id:t (nitro/CUSTOM-PACKETS.md); napit piilotetaan (sallittu()).
+  const ESTETYT = new Set([9418, 9421]), sallittu = h => !ESTETYT.has(h);
+  const kanavaToimi = (h, arvot) => { if (!sallittu(h)) { loki('estetty id-törmäyksen takia, ei lähetetty', h); return false; }
+    K.odottaa = Date.now(); K.virhe = null; K.toimi = h; return laheta(h, arvot); };
   const lahetaKanavaan = (id, teksti) => kanavaToimi(3529, [-id, id, '', teksti]);
   const liityKanavaan = id => { K.liitetyt.add(id); kanavaToimi(9417, [id]); };
   const poistuKanavasta = id => { K.liitetyt.delete(id); kanavaToimi(9418, [id]); };
@@ -1285,7 +1292,7 @@
   // ---------- Ryhmät (palvelimen yksityiset kanavat; Res 13.10. 09:43-09:50) ----------
   function ryhmaSektio(sc) {
     const K = T.kanavat, ots = el('div', 'km-sec', 'Ryhmät'); sc.appendChild(ots);
-    const u = el('span', 'km-sec-action', '+ Uusi', { role: 'button', title: 'Uusi ryhmä' }); u.onclick = () => { T.dialogi = 'uusiRyhma'; piirra(); }; ots.appendChild(u);
+    if (sallittu(9421)) { const u = el('span', 'km-sec-action', '+ Uusi', { role: 'button', title: 'Uusi ryhmä' }); u.onclick = () => { T.dialogi = 'uusiRyhma'; piirra(); }; ots.appendChild(u); }
     for (const k of K.kutsut.values()) sc.appendChild(kutsuRivi(k));
     const v = tuoreVirhe(); if (v && (v.toimi === 9417 || v.toimi === 9418) && !onKanava(T.aktiivinen)) sc.appendChild(el('div', 'km-empty is-inline', virheTeksti(v)));
     const l = [...K.ryhmat].map(id => K.lista.get(id)).filter(Boolean).sort((a, b) => String(a.nimi).localeCompare(String(b.nimi), 'fi'));
@@ -1294,7 +1301,7 @@
   }
   const kutsuNapit = id => { const k = T.kanavat.kutsut.get(id), odottaa = k && k.vastattu && Date.now() - k.vastattu < 5000, r = el('div', 'km-kutsu-napit');
     const ok = nappiEl('is-primary', 'Liity', null, () => { vastaaKutsuun(id, true); piirra(); }), ei = nappiEl('', 'Hylkää', null, () => { vastaaKutsuun(id, false); piirra(); });
-    ok.disabled = ei.disabled = !!odottaa; r.append(ok, ei); return r; };
+    ok.disabled = ei.disabled = !!odottaa; r.appendChild(ok); if (sallittu(9418)) r.appendChild(ei); return r; };
   function kutsuRivi(k) {
     const r = el('div', 'km-row is-kutsu'); r.appendChild(risuAvatar(true));
     const nm = el('div', 'km-nm'); nm.appendChild(el('span', 'km-name', k.nimi)); nm.appendChild(el('small', null, 'Kutsu'));
@@ -1321,10 +1328,10 @@
     const toim = el('div', 'km-mh-actions');
     if (onRyhma) {
       toim.appendChild(nappiEl('', 'Jäsenet', null, () => { T.dialogi = 'jasenet'; laheta(232, [-id, 0, 0, 100]); piirra(); }));
-      if (!omistaja) toim.appendChild(nappiEl('', 'Poistu', null, () => { poistuRyhmasta(id); piirra(); }));
+      if (!omistaja && sallittu(9418)) toim.appendChild(nappiEl('', 'Poistu', null, () => { poistuRyhmasta(id); piirra(); }));
       if (omistaja || K.hallinta) { const pk = nappiEl('is-square', null, 'remove', () => { T.dialogi = 'poistaKanava'; piirra(); }); pk.title = 'Poista ryhmä'; pk.setAttribute('aria-label', 'Poista ryhmä'); toim.appendChild(pk); }
     } else {
-      toim.appendChild(nappiEl(liitetty ? '' : 'is-primary', liitetty ? 'Poistu' : 'Liity', null, () => { liitetty ? poistuKanavasta(id) : liityKanavaan(id); piirra(); }));
+      if (!liitetty || sallittu(9418)) toim.appendChild(nappiEl(liitetty ? '' : 'is-primary', liitetty ? 'Poistu' : 'Liity', null, () => { liitetty ? poistuKanavasta(id) : liityKanavaan(id); piirra(); }));
       if (K.hallinta) { const pk = nappiEl('is-square', null, 'remove', () => { T.dialogi = 'poistaKanava'; piirra(); }); pk.title = 'Poista kanava'; pk.setAttribute('aria-label', 'Poista kanava'); toim.appendChild(pk); }
     }
     const sk = nappiEl('is-square', null, risti(), () => { T.aktiivinen = null; piirra(); }); sk.title = 'Sulje kanava'; sk.setAttribute('aria-label', 'Sulje kanava');
