@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.2.0
+// @version      0.3.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/kupla-messenger.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/kupla-messenger.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -18,6 +18,8 @@
  *   "ensin tosin userscript et voidaan tunnustella ja testaa sitä". Rakennusohje: re-lab tmp/messenger-us/RAKENNUS.md.
  *   0.2.0: Res 08:11 "tyyli ei vastaa näitä v3 sketchejä" -> ulkoasu on robo/messenger-v3 -haaran oma (MessengerView.scss käännettynä,
  *   valitsimet #km2-rajattuina, ikonit data-URI:na) ja rakenne views/*.tsx:n mukainen. MUOKKAA rakennus/osa1.js + osa2.js ja aja rakennus/kokoa.py, älä tätä tiedostoa.
+ *   0.3.0: Res 08:34-08:35 -> Viestit-sivupalkissa Ryhmät ja Kanavat (Datajaon huoneet, vaatii Datajako 0.21.0) ja Datajako-välilehden
+ *   tilalla Skriptit (lisäosat; packet tools ja makrot tulevat sinne).
  * MITEN: pelin React-tilaa ei saa ulkoa, joten skripti kääri clientin omat parserit (lukee jäsennetyt kentät heti parse():n jälkeen)
  *   ja lähettää clientin omilla paketeilla `conn.sendPacket(header, arvot)` (SocketConnection.ts:921). Uusia pakettimuotoja ei ole.
  * RAJAT: ennen skriptin latautumista tulleet yksityisviestit näkyvät vain pelin omassa ikkunassa. Viestit ovat vain muistissa
@@ -29,7 +31,7 @@
   const VW = window;
   if (VW.__kuplaMessenger) return; VW.__kuplaMessenger = true;
   // testiä varten uudelleenasennettava: käärityt parserit kutsuvat AINA viimeisintä käsittelijätaulua (VW.__km2K)
-  const VERSIO = '0.2.0';
+  const VERSIO = '0.3.0';
   // uudelleenasennus (testi) pysäyttää edellisen kopion ajastimet: vain uusin sukupolvi elää
   const SUKU = (VW.__km2Suku = (VW.__km2Suku || 0) + 1), elossa = () => VW.__km2Suku === SUKU;
   const ajoita = (f, ms) => { const h = setInterval(() => { if (!elossa()) return clearInterval(h); f(h); }, ms); return h; };
@@ -174,7 +176,7 @@
     { k: 'pyynnot', ikoni: 'requests', nimi: 'Pyynnöt' },
     { k: 'haku', ikoni: 'search', nimi: 'Haku' },
     { k: 'maininnat', ikoni: 'at', nimi: 'Maininnat' },
-    { k: 'datajako', ikoni: 'start-chat', nimi: 'Datajako' },
+    { k: 'skriptit', ikoni: 'koodi', nimi: 'Skriptit' },
   ];
   const IKONIT = {"chat": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABUAAAAVCAYAAACpF6WWAAAAh0lEQVR4Ad3PsQmAMBQGYUdxAidwBGvHcACncA07B3AetxAlhUeKkCccNv5wTRI+tBG7iElsXE8CtxjtBKyxfjnygA0WoAIL0Bjrpi31Gq1hgM+AKyiHCQQjh+agR9th/gRN/QIFDkH7pQQoUTBAJn4/xxTKvUcBeBOgrISCld4FKAOh0oL7G0g4Bqt8Qk8aAAAAAElFTkSuQmCC", "friends": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACMAAAAhCAMAAABkz+JgAAABF1BMVEX///9rlqhslqgkNTwlNT1rlagkNDwsQkosQkt3WywAAACeMS+vlnlZSDRZSDWWeViWelhaSDUkNTxgTjhaSTUlNT1uQh1vQh2wl3rJkV6wlnmdMS9JKxMsQkphTjmRVybJkl5KPCzKkl6McFKdMC6VeVihdEslNTxhTzlgTjlvKSgkNDxvQx5JLBNvKimSWCZIKxKUMC6RdVUtQkuRWCZ4VzgsQkuhdUtwKimWdDeVMC6RdlVkUDuwl3mLcFJQQS9LPSyhdErKkl+WczdjUDqVMS9wW0J5VzmQdVSRVyWVeVeQdVVPQC9QQC+McVKdMS5vWkFvKihkUTt3Wyx3XC2skHKVMC9FOClfTTl2WyxLPCyWdDhfTTgVKrGnAAAACnRSTlMAAAAAAAAAAAAAc6AYaAAAAoZJREFUeF5909WS21AQBFDLtJu+YgYz0zIzhpnx/78jPVd5SVWyUyq/3OOeliVX/hrIVB4a4Droz/oPKcz6nf7sx/x69n8EEkGdToAKyvkXmc14zXMgSVZbyf5Wqap6DANcFQSzIM3TCwoa+ehuQUytVq8B8NEPOh3TNNMcyWo/6VJoRWTU1tcQHbYjBJ3AzNPcNGlIiJgVJwkqRh2I2r5PEyDnuO/0queCVkBMU0Xkt/2pv0SAJ2mep0jRohESI8uwYg78dhT5ke8D45SraDZWMVHcJekdQcweCXdFyF8wR/q0WnFLFvWybPKUneHvkSypiMwL08xzmg204hhHBxkGYpZtEi5j0GfIjQHbGzhAggwZL53DYdJ0GQE5UuawNCYQMMgm2mixJIO1CxN6tnEzyFg4w+RWTMRzWQUvPHvJZWaOeyIRPZa+0YYhTJkidJyzXcg4YwA8H0DXqTQQSWNZ5brO7v35h3vXdeXwNhv0qGiq0D/hlLtonjmOg7GFxRciPcdEBo3PKBo5dx3HJlmcPpZGPSwU9DM9lD4R4Lq8LDu0sVkUOzs6RRU01XodviCkADzbs4eX/LZSp4vNxUgVSkyt1gSiaIk0xSvbuhxaNo4LpXaUnjJHXkQimCleD9/YthdiU6kRSqL71JrNerMGH3mOc8sKw+EQi6KAGqm3qih0TrVR5awBuYkrK7wc6qoKPJegEU3DaAhbh/S5Yl+EHk0BikIVI6VzDMnBkn1yAJbFzu+V0oauNIwxpLNjmrBDz8IvuXf2KUVGowfyPo9d2J5nY65NeU8fMZA+sg36hcbcsy2POQQQ8enuBPK8KIwG+P9Z4us327NkVw8y33+e3OFRpfIbFMJVtcchyzUAAAAASUVORK5CYII=", "requests": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAB8AAAAiCAMAAACQlPJ4AAAAb1BMVEU+TlY/Tle7zdc+TVYpWmQYMzlhTzkpWmVgTjkYMzq6zda6zdc/TlZhTjkXMzkoWmRgTjgoWWQ4fIoAAAAXMjkTKS0+Tla7zde6zNY/TlYTKS66zde6zdY+TVY/TlcAAAB00k4UKS5z0U500U4TKC2kacgTAAAAFXRSTlMAAAAAAAAAAAAAAAAAAAAAAAAAAABzkhMSAAAB+ElEQVR4XjVUCbajMAxzgO5/n3HWBWjn/mccyeG7pSmWZcmmr3Ji3E4fysi4cIfMx+n2F+mbXMU5caq9e9976l71H+qyMC8neRcnswI0tPmOE7VdgTr5I2dRAcw0MJzJszaNgh+55paZJq2ROd6IjIofOauxmgea0tHcm1JXuQjIZB/5RhNHeODfoiz0iVAzaZM4DCn5I0Hu4YKM4RG4ju/ME+Ar/fo0fvOeeQJHa+gY3nxT2YF66NOZWTV/NcSAI6mo2WNtO7zhCCHGWIFk2cE0Hjv4ldFDDaXWig6/u23HFOu2vVYgIfDDHzilh/y6vV4r0QIDoWfOP9qbYeLbCoRRaxbMT/fcRTLt7fm0sxaIqANuw9I9tJ8brtdrQ48KPvGzetrDLXDCcAgNTBCqzt/AbauGPwGOWEMp0fhfTumw1mi6KOHB/kP/HTg3ZOOGdXAr5DBFNlyUqwuBjsDn/LGyIijmu9rPt6cS4Sis9M7Ri83vFjnP4sxCCSUOD+zE9VXyzyLi+JBsI9HmLlYBfVkGLgqL5IxHE0etOtN3wN+y5lgSs1xMiSzL8xtwkRkWp7uC1emb7gt1VOZFvozuHtNO0T4eXCykTyKcn3w3PSalqgfPSnSf7gN3grg/JhQEWyJb6zQBx/4uy+fFYrksed/38S9xOeLzPyKsWw7cE9IyAAAAAElFTkSuQmCC", "search": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAwAAAAMCAYAAABWdVznAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAABSSURBVChTrZDRDgAQDAPL//8zIbY0TfHAvSzmOpkCT1uVma4LODkoGmCZ77JfV1V0UJ53gS3fArp4np9+KcTRc6HpRoAF92qi047ygJe+ygDQASfpCxL/V9w3AAAAAElFTkSuQmCC", "follow": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAPAgMAAACQHae8AAAACVBMVEX///8AAAAb2AAnw6rbAAAAAXRSTlMAQObYZgAAADtJREFUeF5NyKERACEQxdCYK+H6WYNfwe8ABPRDE1QJCwbzJhPgNzA5eFA2aps+D8Oi7D6qMkiCFHwvC3JUEFNhwuyeAAAAAElFTkSuQmCC", "profile": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAMBAMAAACZySCyAAAAJ1BMVEX///+RkZH09PT////rwoHrwoDswoDqwoDYk2HYlGHrwYDpwX/Zk2HDsc8wAAAAAXRSTlMAQObYZgAAAFFJREFUeF5VzLENgDAMBEBHWYDkkajxBFhMkIIRWIEi2zANKzBWHDsFfPE6ffEUkmUi7Bb5YDngeG9IgqKWsZyPLoo8X5mZV+r9h/gzKPrh1gBQjQ9ajffB6wAAAABJRU5ErkJggg==", "start-chat": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAOAgMAAABbQXQZAAAACVBMVEX///////8AAACO9MPsAAAAAXRSTlMAQObYZgAAADdJREFUeF51yqENACAMRcGnmQJTwkKfMANTsAS+BtMpCUFjTh0pwjGps6T25ZW0h4NNoADUS4YDzx0Ql4GNbg8AAAAASUVORK5CYII=", "add": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABkAAAAZBAMAAAA2x5hQAAAAElBMVEX///8AAAB3v0Nloznk4uLS0NCoLOgPAAAAAXRSTlMAQObYZgAAAF9JREFUeF590NEJwCAMBuF2Aw/qAlnBCQpdwId//1WKGlSK9d4+JIR4bDvxQlGUl8uTHk+h6YZrklmXlM2itFIGM4guq62VamtBSuBS09hXpv4EkwRyjWvL8fQ+/7LtBUboLihV41V4AAAAAElFTkSuQmCC", "invite": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABMAAAANAgMAAAA24r20AAAACVBMVEX///8AAAD///9+749PAAAAAXRSTlMAQObYZgAAAEJJREFUeF4lzCEOgFAMg+Ei3tHwkICZn9l9OMIE/ynpgvnSLO0kHTIrx6jTkWpH6rlUxG37HQOb4HvAPs3eZvV/MB/g3BMN7OqiyQAAAABJRU5ErkJggg==", "remove": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA0AAAANCAYAAABy6+R8AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAACxMAAAsTAQCanBgAAABJSURBVChTY2TADv5DaRDAUIMsgKwQFwCrh2kiRgMMwC0CaSKkEa6GLJvI8hMTmIkKYAah03CATRNBMMg1kRV66CGDTyNULQMDACkBCxHze4N3AAAAAElFTkSuQmCC", "home": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAA0AAAALAQMAAACefJUiAAAABlBMVEX///8AAABVwtN+AAAAAXRSTlMAQObYZgAAACtJREFUeF49wrENABAQAMCLRmkEa+iMxmhG+RGUOjrJSWTKVJcexnaPFt8DgvAKXXvwnfgAAAAASUVORK5CYII="};
   const CSS = `.badge.km-badge,
@@ -946,6 +948,15 @@
 #km2 .nitro-card.kupla-messenger .nitro-card-header{cursor:move;user-select:none}
 #km2 .nitro-card.kupla-messenger .km-icon.at{width:auto;height:16px;line-height:16px;font-weight:bold;font-size:14px;color:#62c1d6;background:none}
 #km2 .nitro-card.kupla-messenger .km-icon.at::before{content:"@"}
+#km2 .nitro-card.kupla-messenger .km-icon.koodi{width:auto;height:16px;line-height:16px;font-weight:bold;font-size:12px;color:#62c1d6;background:none;font-family:monospace}
+#km2 .nitro-card.kupla-messenger .km-icon.koodi::before{content:"</>"}
+#km2 .km-av.km-djav{display:flex;align-items:center;justify-content:center;color:#62c1d6;font-weight:bold;font-size:17px}
+#km2 .km-av.km-djav.is-ryhma::before{content:"";width:16px;height:14px;background:center/contain no-repeat url("__IKONI_friends__");image-rendering:pixelated}
+#km2 .km-djpaikka{display:flex;flex:1;flex-direction:column;min-width:0;min-height:0}
+#km2 .km-djpaikka .dj-takaisin{display:none!important}
+#km2 .km-djpaikka > .dj-ikkuna{position:relative!important;inset:auto!important;flex:1;min-height:0;display:flex;flex-direction:column}
+#km2 .km-sec .km-sec-ohje{margin-left:auto;font-weight:normal;letter-spacing:0;text-transform:none;font-size:10.5px}
+#km2 .km-tulossa{padding:8px 14px;border-top:1px solid #22364f;color:#7f92aa;font-size:12px}
 #km2 .km-x{width:10px;height:12px}
 #km2 .km-av .avatar-image.km-alku{display:flex;align-items:center;justify-content:center;color:#9fb3c8;font-weight:bold;font-size:15px;background:none!important}
 #km2 .km-row.km-mrow{height:auto;min-height:44px;padding:7px 8px;align-items:flex-start}
@@ -1000,7 +1011,7 @@
   function avaa(auki) {
     T.auki = auki == null ? !T.auki : !!auki; juuri.style.display = T.auki ? '' : 'none';
     if (T.auki) { juuri.style.left = Math.min(juuri.offsetLeft, Math.max(0, innerWidth - 120)) + 'px'; juuri.style.top = Math.min(juuri.offsetTop, Math.max(0, innerHeight - 80)) + 'px'; }
-    else { delete paneelit.datajako.dataset.auki; T.dialogi = null; T.suhdeAuki = null; }
+    else { djPiiloon(); T.dialogi = null; T.suhdeAuki = null; }
     piirra();
   }
   const vaihda = k => { T.valilehti = k; T.dialogi = null; T.suhdeAuki = null; piirra(); };
@@ -1037,7 +1048,7 @@
 
   function piirraTabit() {
     tabit.textContent = '';
-    const luvut = { viestit: [lukemattomat()], pyynnot: [T.pyynnot.size, true], maininnat: [mainintojaUusia()], datajako: [djLukematta()] };
+    const luvut = { viestit: [lukemattomat() + djLukematta()], pyynnot: [T.pyynnot.size, true], maininnat: [mainintojaUusia()] };
     for (const v of VALILEHDET) {
       const on = T.valilehti === v.k;
       const b = el('button', 'km-tab' + (on ? ' is-active' : ''), null, { type: 'button', role: 'tab', 'aria-selected': String(on) });
@@ -1056,9 +1067,9 @@
     const vieritys = {}; juuri.querySelectorAll('[data-kmv]').forEach(e => { vieritys[e.dataset.kmv] = { top: e.scrollTop, pohjassa: e.scrollHeight - e.scrollTop - e.clientHeight < 40 }; });
     piirraTabit();
     for (const v of VALILEHDET) paneelit[v.k].classList.toggle('is-hidden', v.k !== T.valilehti);
-    if (T.valilehti !== 'datajako') delete paneelit.datajako.dataset.auki;
+    if (T.valilehti !== 'viestit' && T.valilehti !== 'skriptit') djPiiloon();
     const p = paneelit[T.valilehti];
-    ({ viestit: piirraViestit, kaverit: piirraKaverit, pyynnot: piirraPyynnot, haku: piirraHaku, maininnat: piirraMaininnat, datajako: piirraDatajako })[T.valilehti](p);
+    ({ viestit: piirraViestit, kaverit: piirraKaverit, pyynnot: piirraPyynnot, haku: piirraHaku, maininnat: piirraMaininnat, skriptit: piirraSkriptit })[T.valilehti](p);
     p.querySelectorAll('[data-kmv]').forEach(e => { const s = vieritys[e.dataset.kmv];
       if (e.dataset.kmvAlas === '1') e.scrollTop = (!s || s.pohjassa) ? e.scrollHeight : s.top; else if (s) e.scrollTop = s.top; });
     if (fokus) { const e = p.querySelector('[data-km="' + fokus.k + '"]'); if (e) { e.focus(); try { if (fokus.a != null) e.setSelectionRange(fokus.a, fokus.b); } catch (er) {} } }
@@ -1071,15 +1082,27 @@
   function ketjuLista() {
     return [...T.ketjut.entries()].filter(([id, l]) => l.length && !T.suljetut.has(id)).map(([id, l]) => ({ id, l, viim: l[l.length - 1] })).sort((a, b) => b.viim.t - a.viim.t);
   }
-  function piirraViestit(p) {
-    p.textContent = '';
-    const lista = ketjuLista();
-    if (T.aktiivinen != null && !lista.some(k => k.id === T.aktiivinen)) lista.unshift({ id: T.aktiivinen, l: T.ketjut.get(T.aktiivinen) || [], viim: null });
-    if (T.aktiivinen == null && lista.length) T.aktiivinen = lista[0].id;
-    if (T.aktiivinen != null) T.lukematta.delete(T.aktiivinen);
-    const sivu = el('div', 'km-side'); sivu.appendChild(el('div', 'km-sec', 'Yksityisviestit'));
+  // Viestit-sivupalkki: pelin yksityisviestit + Datajaon huoneet (Res 13.10. 08:34 "lisää viestit osioon ryhmät, kanavat ja datajaon
+  // ominaisuudet liite, osoita ja toiminto"). Datajaon huone näytetään oikeassa palstassa Datajakon omana chat-näkymänä, jonka
+  // kirjoitusrivillä Liite / Osoita / Toiminto jo ovat. Aktiivinen: numero = pelaajan id, 'dj:<id>' = Datajaon huone.
+  const onDj = a => typeof a === 'string' && a.startsWith('dj:');
+  const djHuoneet = () => { const u = djUI(); try { return u && typeof u.huoneet === 'function' ? u.huoneet() : null; } catch (e) { return null; } };
+  function djRivi(h) {
+    const aktiivi = T.aktiivinen === 'dj:' + h.id;
+    const r = el('div', 'km-row' + (aktiivi ? ' is-active' : ''), null, { role: 'button', tabindex: '0' });
+    r.onclick = () => { T.aktiivinen = 'dj:' + h.id; piirra(); };
+    if (h.tyyppi === 'yv') { const f = [...T.kaverit.values()].find(x => x.nimi === h.vastapuoli); r.appendChild(avatar(f && f.asu, { nimi: h.vastapuoli || h.nimi, paikalla: h.mukana.length ? true : undefined })); }
+    else { const w = el('div', 'km-avw'), a = el('div', 'km-av km-djav' + (h.tyyppi === 'ryhma' ? ' is-ryhma' : ''), h.tyyppi === 'ryhma' ? '' : '#'); w.appendChild(a); if (h.mukana.length) w.appendChild(el('span', 'km-dot is-online')); r.appendChild(w); }
+    const nm = el('div', 'km-nm'); nm.appendChild(el('span', 'km-name', h.tyyppi === 'yv' ? (h.vastapuoli || h.nimi) : h.nimi));
+    const v = h.viimeinen; nm.appendChild(el('small', null, v ? (v.oma ? 'Sinä: ' : (v.from ? v.from + ': ' : '')) + v.teksti : (h.mukana.length ? 'Paikalla: ' + h.mukana.join(', ') : (h.tyyppi === 'yv' ? 'Datajako 1:1, ei viestejä' : 'Ei viestejä'))));
+    const meta = el('div', 'km-row-meta'); meta.appendChild(el('time', null, v && v.ts ? listaAika(v.ts) : ''));
+    const m = merkkiEl(aktiivi ? 0 : h.lukematta); if (m) meta.appendChild(m);
+    r.append(nm, meta); return r;
+  }
+  function viestiSivu(lista, dj) {
+    const sivu = el('div', 'km-side');
     const sc = el('div', 'km-scroll', null, { 'data-kmv': 'ketjut' });
-    if (!lista.length) sc.appendChild(tyhja('Ei vielä keskusteluja.', 'Aloita keskustelu Kaverit-välilehdeltä', () => vaihda('kaverit')));
+    sc.appendChild(el('div', 'km-sec', 'Yksityisviestit'));
     for (const k of lista) {
       const f = henkilo(k.id), aito = k.id > 0, aktiivi = k.id === T.aktiivinen;
       const r = el('div', 'km-row' + (aktiivi ? ' is-active' : '') + (aito && !f.paikalla ? ' is-offline' : ''), null, { role: 'button', tabindex: '0' });
@@ -1091,9 +1114,39 @@
       const m = merkkiEl(aktiivi ? 0 : (T.lukematta.get(k.id) || 0)); if (m) meta.appendChild(m);
       r.append(nm, meta); sc.appendChild(r);
     }
-    sivu.appendChild(sc); p.appendChild(sivu);
-    if (T.aktiivinen != null) p.appendChild(ketjuPaneeli(T.aktiivinen));
-    else { const m = el('div', 'km-main'); m.appendChild(tyhja('Viestit näkyvät tässä, kun aloitat keskustelun.')); p.appendChild(m); }
+    const yv = dj ? dj.filter(h => h.tyyppi === 'yv') : [];
+    for (const h of yv) sc.appendChild(djRivi(h));
+    if (!lista.length && !yv.length) sc.appendChild(el('div', 'km-empty is-inline', 'Ei vielä keskusteluja. Aloita Kaverit-välilehdeltä.'));
+    const ryhmaOts = el('div', 'km-sec', 'Ryhmät');
+    if (dj) { const u = el('span', 'km-sec-action', '+ Uusi', { role: 'button', title: 'Uusi ryhmä tai liity salasanalla' });
+      u.onclick = () => { const y = dj.find(h => h.tyyppi === 'yhteinen'); if (y) T.aktiivinen = 'dj:' + y.id; piirra(); const ui = djUI(); if (ui && ui.uusi) ui.uusi(); }; ryhmaOts.appendChild(u); }
+    sc.appendChild(ryhmaOts);
+    if (!dj) sc.appendChild(el('div', 'km-empty is-inline', 'Ryhmät ja kanavat tulevat Datajako-lisäosasta (0.21.0 tai uudempi).'));
+    else { const r = dj.filter(h => h.tyyppi === 'ryhma'); if (!r.length) sc.appendChild(el('div', 'km-empty is-inline', 'Ei ryhmiä. Uusi ryhmä toimii salasanalla.')); r.forEach(h => sc.appendChild(djRivi(h))); }
+    sc.appendChild(el('div', 'km-sec', 'Kanavat'));
+    if (dj) dj.filter(h => h.tyyppi === 'yhteinen' || h.tyyppi === 'kanava').forEach(h => sc.appendChild(djRivi(h)));
+    sivu.appendChild(sc); return sivu;
+  }
+  function piirraViestit(p) {
+    const lista = ketjuLista(), dj = djHuoneet();
+    if (onDj(T.aktiivinen) && !(dj && dj.some(h => 'dj:' + h.id === T.aktiivinen))) T.aktiivinen = null;
+    if (T.aktiivinen != null && !onDj(T.aktiivinen) && !lista.some(k => k.id === T.aktiivinen)) lista.unshift({ id: T.aktiivinen, l: T.ketjut.get(T.aktiivinen) || [], viim: null });
+    if (T.aktiivinen == null && lista.length) T.aktiivinen = lista[0].id;
+    if (T.aktiivinen != null && !onDj(T.aktiivinen)) T.lukematta.delete(T.aktiivinen);
+    // sivupalkki vaihdetaan aina; oikea palsta vain jos se on eri asia (Datajakon kirjoituskenttä ei saa menettää fokusta saapuvista paketeista)
+    const sivu = viestiSivu(lista, dj), vanha = p.querySelector(':scope > .km-side');
+    if (vanha) vanha.replaceWith(sivu); else p.prepend(sivu);
+    const oikeat = [...p.children].filter(e => e !== sivu);
+    if (onDj(T.aktiivinen)) {
+      const id = T.aktiivinen.slice(3);
+      if (!(oikeat.length === 1 && oikeat[0] === djPaikka)) { oikeat.forEach(e => e.remove()); p.appendChild(djPaikka); }
+      upotaDj(djPaikka, 'chat:' + id, u => u.valitse(id));
+    } else {
+      djPiiloon();
+      oikeat.forEach(e => e.remove());
+      if (T.aktiivinen != null) p.appendChild(ketjuPaneeli(T.aktiivinen));
+      else { const m = el('div', 'km-main'); m.appendChild(tyhja('Viestit näkyvät tässä, kun aloitat keskustelun.')); p.appendChild(m); }
+    }
   }
   function ketjuPaneeli(id) {
     const f = henkilo(id), aito = id > 0, l = T.ketjut.get(id) || [], o = oma();
@@ -1297,15 +1350,32 @@
     col.append(sec, sc); p.appendChild(col);
   }
 
-  // ---------- Datajako (Res 07:38: pysyy asukanavalla, tulee omaksi välilehdeksi) ----------
-  // Datajako-lisäosan oma ikkuna siirretään välilehden sisään; sen otsikko ja koonmuutoskahvat piilotetaan.
-  function piirraDatajako(p) {
+  // ---------- Datajakon ikkuna upotettuna (Viestit: huoneen chat, Skriptit: lisäosat) ----------
+  // Sama ikkuna siirretään sinne missä sitä tarvitaan. Datajako laskee lukemattomat vain kun sen ikkuna on piilossa (display),
+  // joten se piilotetaan aina kun se ei ole näkyvissä messengerissä.
+  const djPaikka = el('div', 'km-main km-djpaikka');
+  let djNakyma = '';
+  function upotaDj(sailio, nakyma, vaihda) {
     const u = djUI();
-    if (!u || !u.ikkuna) { p.textContent = ''; const c = el('div', 'km-col'); c.appendChild(tyhja('Datajako-lisäosa ei ole päällä tässä selaimessa.')); p.appendChild(c); return; }
-    const uusi = u.ikkuna.parentElement !== p; if (uusi) { p.textContent = ''; p.appendChild(u.ikkuna); }
+    if (!u || !u.ikkuna) { sailio.textContent = ''; sailio.appendChild(tyhja('Datajako-lisäosa ei ole päällä tässä selaimessa.')); return false; }
+    const siirretty = u.ikkuna.parentElement !== sailio; if (siirretty) { sailio.textContent = ''; sailio.appendChild(u.ikkuna); }
     Object.assign(u.ikkuna.style, { position: 'relative', left: '0', top: '0', right: 'auto', bottom: 'auto', width: '100%', height: '100%', display: '', transform: 'none', zIndex: 'auto', maxWidth: 'none' });
+    if (u.upotettu) u.upotettu(true);
     if (u.avaaja) u.avaaja.style.display = 'none';
-    // avaa() piirtää Datajakon uudelleen: vain kun välilehti tulee näkyviin, ei jokaisesta saapuvasta paketista
-    try { if (u.onPien && u.onPien()) u.pienenna(false); if (uusi || !p.dataset.auki) { p.dataset.auki = '1'; u.avaa(); } } catch (e) {}
+    try { if (u.onPien && u.onPien()) u.pienenna(false); if (siirretty || djNakyma !== nakyma) { djNakyma = nakyma; vaihda(u); } } catch (e) {}
+    return true;
+  }
+  function djPiiloon() { const u = djUI(); if (u && u.ikkuna && juuri && juuri.contains(u.ikkuna)) { u.ikkuna.style.display = 'none'; djNakyma = ''; } }
+
+  // ---------- Skriptit (Res 08:35 "lisäosille oma skriptit tab johon otetaa myös packet tools macroja yms") ----------
+  const skriptiPaikka = el('div', 'km-djpaikka');
+  function piirraSkriptit(p) {
+    if (!p.firstChild) {
+      const col = el('div', 'km-col');
+      const sec = el('div', 'km-sec', 'Lisäosat'); sec.appendChild(el('span', 'km-sec-ohje', 'Datajaon kautta jaetut, ajo aina vahvistuksella'));
+      col.append(sec, skriptiPaikka, el('div', 'km-tulossa', 'Packet tools ja makrot tulevat tälle välilehdelle.'));
+      p.appendChild(col);
+    }
+    upotaDj(skriptiPaikka, 'lisaosat', u => u.lisaosat && u.lisaosat());
   }
 })();

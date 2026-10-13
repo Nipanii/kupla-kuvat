@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.20.0
+// @version      0.21.0
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/datajako.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/datajako.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -54,7 +54,7 @@
     if (len > n - 4 || n - 4 - len > 3) return null;
     return buf.slice(4, 4 + len);
   }
-  const VERSIO = '0.20.0';   /* pida sama kuin @version: kerrotaan kuplaDatajako.versio, jotta nakee kumpi versio kussakin clientissa pyorii */
+  const VERSIO = '0.21.0';   /* pida sama kuin @version: kerrotaan kuplaDatajako.versio, jotta nakee kumpi versio kussakin clientissa pyorii */
   const TE = new TextEncoder(), TD = new TextDecoder();
   // kehys: [tyyppi u8][otsikon pituus u16][otsikko JSON][runko]
   const T = { TEKSTI: 1, PALA: 2, POISTA: 3, TARVITSEN: 4, TOIMINTO: 5, KUITTAUS: 6, LASNA: 7, KUTSU: 8, HISTORIA: 9, TARJOUS: 10, LISAOSAT: 11 };
@@ -975,7 +975,7 @@
     const ylarivi = el('div', 'd-flex gap-1 align-items-center');
     const valinta = el('select', 'form-select form-select-sm'); valinta.style.flex = '1';
     const asetusNappi = el('button', 'btn btn-secondary btn-sm', '⚙', { type: 'button', title: 'Asetukset' });
-    const takaisin = el('button', 'btn btn-secondary btn-sm', '‹', { type: 'button', title: 'Takaisin chattilistaan' });
+    const takaisin = el('button', 'btn btn-secondary btn-sm dj-takaisin', '‹', { type: 'button', title: 'Takaisin chattilistaan' });   // dj-takaisin: kupla-messenger piilottaa (sen sivupalkki on lista)
     takaisin.style.cssText = 'padding:0 7px'; takaisin.onclick = () => { ase.nakyma = 'lista'; tallennaAse(); piirra(); };
     ylarivi.append(takaisin, valinta, asetusNappi);
     const liityRivi = el('div', 'd-flex gap-1 align-items-center flex-wrap'); liityRivi.classList.add('dj-pois');
@@ -1480,7 +1480,19 @@
       merkki(); piirraTauko();
     });
     document.body.append(ikkuna, avaaja); asetaPien(pien, false); if (!pien) piirra();
-    VW.kuplaDatajakoUI = { ikkuna, avaaja, piirra, asetaTiedosto, avaa: () => { ikkuna.style.display = ''; lukemattomat.delete(ase.valittu); lukematta = [...lukemattomat.values()].reduce((a, b) => a + b, 0); if (pien) asetaPien(false); else { merkki(); piirra(); } }, pienenna: p => asetaPien(p), onPien: () => pien };
+    VW.kuplaDatajakoUI = { ikkuna, avaaja, piirra, asetaTiedosto, avaa: () => { ikkuna.style.display = ''; lukemattomat.delete(ase.valittu); lukematta = [...lukemattomat.values()].reduce((a, b) => a + b, 0); if (pien) asetaPien(false); else { merkki(); piirra(); } }, pienenna: p => asetaPien(p), onPien: () => pien,
+      /* 0.21.0 kupla-messenger (Res 13.10. 08:34): Viestit-välilehti listaa Datajaon huoneet omassa sivupalkissaan (Ryhmät / Kanavat /
+         yksityiset) ja näyttää valitun huoneen tässä ikkunassa. Lisäosat avautuvat messengerin Skriptit-välilehdelle. Pelkkä luku + valinta,
+         lähetys kulkee yhä tämän ikkunan omista napeista (Liite / Osoita / Toiminto). */
+      huoneet: () => ase.huoneet.map(h => { const l = lista(h.id), vi = l[l.length - 1];
+        return { id: h.id, nimi: h.nimi === h.id ? h.id : h.nimi, tyyppi: h.id === YHTEINEN ? 'yhteinen' : h.yv ? 'yv' : h.avoin ? 'kanava' : 'ryhma',
+          vastapuoli: h.vastapuoli || null, lukematta: lukemattomat.get(h.id) || 0, mukana: lasnaLista(h.id), valittu: ase.valittu === h.id && ase.nakyma === 'chat',
+          viimeinen: vi ? { oma: !!vi.oma, from: vi.from || '', teksti: esikatseluTeksti(vi), ts: vi.ts || 0 } : null }; }),
+      valitse: id => { if (!ase.huoneet.some(h => h.id === id)) return false; ase.valittu = id; ase.nakyma = 'chat'; lukemattomat.delete(id);
+        lukematta = [...lukemattomat.values()].reduce((a, b) => a + b, 0); merkki(); tallennaAse(); ikkuna.style.display = ''; if (pien) asetaPien(false); else piirra(); return true; },
+      lisaosat: () => { ase.nakyma = 'lisaosat'; tallennaAse(); jonoon(YHTEINEN, T.LISAOSAT, { r: 0 }); ikkuna.style.display = ''; if (pien) asetaPien(false); else piirra(); },
+      uusi: () => { ase.nakyma = 'chat'; ikkuna.style.display = ''; piirra(); nayta(liityRivi, true); try { liityKentta.focus(); } catch (e) {} },
+      upotettu: on => { ikkuna.classList.toggle('dj-upotettu', !!on); } };
   }
   try { teeUI(); } catch (e) { console.warn('[datajako] UI:', e); }
 })();
