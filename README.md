@@ -34,3 +34,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/kirppari-myynti-ennen-1013.png` — Kirpparin myynti-ikkuna ennen korjausta (250 px)
 - `kuvat/kirppari-myynti-jalkeen-1013.png` — Kirpparin myynti-ikkuna korjauksen esikatselu (korkeus sisällön mukaan)
 - `kuvat/kohtelu-kp-robo.jpg` — robo: miten kurkkupomo kohtelee robota (13.10.)
+- `kuvat/kultainen-cola-luonnos.png` — Kultainen cola-kone, luonnos (Ezkeyn idea)
