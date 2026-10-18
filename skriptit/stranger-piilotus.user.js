@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @grant        none
 // @run-at       document-idle
-// @version      1.0.1
+// @version      1.0.2
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/stranger-piilotus.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/stranger-piilotus.user.js
 // @homepageURL  https://github.com/Nipanii/kupla-kuvat
@@ -20,7 +20,6 @@
 //   Renderöijä pudottaa paketin jos jäsentimen parse() palauttaa false (Nitro_Render_V3 SocketConnection.ts:1126), joten koukku
 //   palauttaa false näille kolmelle -> mikään Stranger-käsittelijä ei saa niitä.
 // RAJA: vain OMA näkymä. Palvelin luo haasteen silti; se vanhenee itsestään (ei palkintoa, ei rangaistusta).
-//   Älä käytä yhtä aikaa Stranger-ratkaisijan kanssa: piilotus pudottaa paketit joita ratkaisija tarvitsee.
 //   Kytkin: nappi vasemmassa alakulmassa (localStorage kupla.strangerPiilotus). Pois päältä = Stranger näkyy taas seuraavasta haasteesta.
 (function () {
   'use strict';
