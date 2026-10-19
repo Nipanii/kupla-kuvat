@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.9.4
+// @version      0.9.5
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/shooter.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/shooter.user.js
 // @description  Ammuskelupeli Datajaon pelikanavan (asu, paketti 2730) kautta. Välilyönti ampuu katseen suuntaan. Vain samassa huoneessa olevat Datajako 0.22+ -pelaajat.
@@ -382,7 +382,7 @@
   // clientin game mode pois pelin ajaksi, takaisin lopussa (kutsutaan liity/poistu/kytkimestä)
   function gmPelinAjaksi() {
     if (wasdAktiivinen()) { if (gmPalautus === null && gmLue()) { gmPalautus = true; gmAseta(false); } }
-    else if (gmPalautus) { gmPalautus = null; gmAseta(true); }
+    else if (gmPalautus) { gmPalautus = null; }   // 0.9.5 (kp 10:46): EI palauteta clientin game modea päälle -> se lähetti joka kirjaimen omana viestinään pelin jälkeen
   }
   const wasdVaihda = () => { wasdPaalla = !wasdPaalla; try { localStorage.setItem('kupla-shooter-wasd', wasdPaalla ? 'on' : 'off'); } catch (e) {} pidetyt.clear(); gmPelinAjaksi(); piirraNappi(); };
 
@@ -581,5 +581,5 @@
 
   // kuuntelija kiinni kun Datajako on latautunut
   const kiinni = setInterval(() => { const p = peli(); if (!p) return; clearInterval(kiinni); p.kuuntele(kasittele); }, 500);
-  VW.kuplaShooter = { versio: '0.9.4', liity, poistu, ammu, valitseAse, ASEET, tila: () => ({ paalla, ase, hp, tapot, kuolemat, pelaajat: [...pelaajat], luodit: luodit.size }) };
+  VW.kuplaShooter = { versio: '0.9.5', liity, poistu, ammu, valitseAse, ASEET, tila: () => ({ paalla, ase, hp, tapot, kuolemat, pelaajat: [...pelaajat], luodit: luodit.size }) };
 })();
