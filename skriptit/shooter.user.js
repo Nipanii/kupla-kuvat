@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.9.3
+// @version      0.9.4
 // @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/shooter.user.js
 // @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/shooter.user.js
 // @description  Ammuskelupeli Datajaon pelikanavan (asu, paketti 2730) kautta. Välilyönti ampuu katseen suuntaan. Vain samassa huoneessa olevat Datajako 0.22+ -pelaajat.
@@ -436,7 +436,7 @@
   for (const t of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'dblclick']) addEventListener(t, e => {
     if (!pelikankaalle(e)) return;
     e.preventDefault(); e.stopImmediatePropagation();
-    if (t === 'mousedown') { if (chatTila || onChatKentta(document.activeElement)) liikkeeseen(); hiiriX = e.clientX; hiiriY = e.clientY; ammu(e.clientX, e.clientY); }
+    if (t === 'pointerdown') {   /* 0.9.4: pointerdownin preventDefault estää selaimen mousedownin -> ammutaan tästä (kp 10:41 'mul ei ammu click') */ if (chatTila || onChatKentta(document.activeElement)) liikkeeseen(); hiiriX = e.clientX; hiiriY = e.clientY; ammu(e.clientX, e.clientY); }
   }, true);
 
   // ---------- liike vai chat (0.9.3, kp 10:39 "järkevä system et liikuttaako pelaajaa vai chat input" · "ei voi de-select chat input"
@@ -581,5 +581,5 @@
 
   // kuuntelija kiinni kun Datajako on latautunut
   const kiinni = setInterval(() => { const p = peli(); if (!p) return; clearInterval(kiinni); p.kuuntele(kasittele); }, 500);
-  VW.kuplaShooter = { versio: '0.9.3', liity, poistu, ammu, valitseAse, ASEET, tila: () => ({ paalla, ase, hp, tapot, kuolemat, pelaajat: [...pelaajat], luodit: luodit.size }) };
+  VW.kuplaShooter = { versio: '0.9.4', liity, poistu, ammu, valitseAse, ASEET, tila: () => ({ paalla, ase, hp, tapot, kuolemat, pelaajat: [...pelaajat], luodit: luodit.size }) };
 })();
