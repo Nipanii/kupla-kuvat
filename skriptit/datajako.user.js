@@ -1,13 +1,12 @@
 // ==UserScript==
 // @name         Kupla Datajako
 // @namespace    https://re-lab.local/kupla
+// @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/datajako.user.js
+// @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/datajako.user.js
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.21.0
-// @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/datajako.user.js
-// @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/datajako.user.js
-// @homepageURL  https://github.com/Nipanii/kupla-kuvat
+// @version      0.22.0
 // @description  Salattu chat + tiedostojako asun (figure) kautta. Vain samassa hotellihuoneessa. Ei palvelinmuutoksia.
 // @kupla-oletus on
 // @author       re-lab
@@ -54,10 +53,10 @@
     if (len > n - 4 || n - 4 - len > 3) return null;
     return buf.slice(4, 4 + len);
   }
-  const VERSIO = '0.21.0';   /* pida sama kuin @version: kerrotaan kuplaDatajako.versio, jotta nakee kumpi versio kussakin clientissa pyorii */
+  const VERSIO = '0.22.0';   /* pida sama kuin @version: kerrotaan kuplaDatajako.versio, jotta nakee kumpi versio kussakin clientissa pyorii */
   const TE = new TextEncoder(), TD = new TextDecoder();
   // kehys: [tyyppi u8][otsikon pituus u16][otsikko JSON][runko]
-  const T = { TEKSTI: 1, PALA: 2, POISTA: 3, TARVITSEN: 4, TOIMINTO: 5, KUITTAUS: 6, LASNA: 7, KUTSU: 8, HISTORIA: 9, TARJOUS: 10, LISAOSAT: 11 };
+  const T = { TEKSTI: 1, PALA: 2, POISTA: 3, TARVITSEN: 4, TOIMINTO: 5, KUITTAUS: 6, LASNA: 7, KUTSU: 8, HISTORIA: 9, TARJOUS: 10, LISAOSAT: 11, PELI: 12 };
   function pakkaa(tyyppi, otsikko, runko) {
     const h = TE.encode(JSON.stringify(otsikko)), b = runko || new Uint8Array(0), o = new Uint8Array(3 + h.length + b.length);
     o[0] = tyyppi; o[1] = h.length >> 8; o[2] = h.length & 255; o.set(h, 3); o.set(b, 3 + h.length); return o;
@@ -228,9 +227,22 @@
     if (jono.some(x => x.tyyppi === T.PALA && x.huone === huone && x.otsikko && x.otsikko.id === tied.id && x.otsikko.i === i)) return false;
     jonoon(huone, T.PALA, Object.assign({ i }, tied), data.subarray(i * CHUNK, (i + 1) * CHUNK)); return true;
   }
+  /* 0.22.0 PELIKANAVA (kp 19.10. 09:45 "shooter prototyyppi, toimii datajaon eli asun kautta"): lisäosa lähettää pieniä
+     pelitapahtumia (kuplaDatajakoPeli.laheta). Ne ohittavat chat-jonon ja kulkevat yhteisellä avaimella; kaikki odottavat
+     tapahtumat (max 12) pakataan yhteen kehykseen, joten GAP-raja (~3 kehystä/s) ei pudota laukauksia. Ei kuittausta, ei historiaa. */
+  const peliJono = [], peliKuuntelijat = new Set();
   async function laheteTick() {
     if (kesken) return; const nyt = Date.now();
-    if (jono.length && nyt - viimeLahetys >= GAP) {
+    if (peliJono.length && paalla() && nyt - viimeLahetys >= GAP) {
+      kesken = true; viimeLahetys = nyt;
+      try {
+        const oma = omaAsu(); if (!oma) return;
+        if (!puhdas) puhdas = { figure: puhdasAsu(oma.figure), gender: oma.gender };
+        const e = peliJono.splice(0, 12);
+        const osa = await salaa(YHTEINEN, pakkaa(T.PELI, { e }));
+        if (!laheta2730(puhdas.gender, puhdas.figure + osa)) { peliJono.unshift(...e); viimeLahetys = nyt + 500; tilasto.lahetysVirhe++; }
+      } finally { kesken = false; }
+    } else if (jono.length && nyt - viimeLahetys >= GAP) {
       kesken = true; viimeLahetys = nyt;
       try {
         const it = jono.shift(), oma = omaAsu();
@@ -240,7 +252,7 @@
         const osa = await salaa(it.huone, pakkaa(it.tyyppi, it.otsikko, it.runko));
         if (!laheta2730(puhdas.gender, puhdas.figure + osa)) return takaisin();
       } finally { kesken = false; }
-    } else if (!jono.length && puhdas && nyt - viimeLahetys >= 3000) {
+    } else if (!jono.length && !peliJono.length && puhdas && nyt - viimeLahetys >= 3000) {
       const p = puhdas; puhdas = null; laheta2730(p.gender, p.figure);
     }
   }
@@ -526,6 +538,7 @@
   function kuittaa(huone, id) { if (ase.kuittaus === false || !id) return; let q = kuittausJono.get(huone); if (!q) kuittausJono.set(huone, q = { ids: new Set(), t: Date.now() }); q.ids.add(String(id).slice(0, 16)); }
   async function kasittele(huone, nimi, k) {
     const o = k.otsikko;
+    if (k.tyyppi === T.PELI) { if (huone !== YHTEINEN || !o || !Array.isArray(o.e)) return; for (const e of o.e.slice(0, 12)) if (e && typeof e === 'object') peliKuuntelijat.forEach(f => { try { f(nimi, e); } catch (x) {} }); return; }
     if (k.tyyppi === T.TEKSTI) { lisaa(huone, { id: o.id, tyyppi: 'teksti', from: nimi, ts: +o.s || Date.now(), teksti: String(o.x || '').slice(0, 2000) }); kuittaa(huone, o.id); }   // o.s = lahettajan aika: uudelleenlahetys ei hyppaa listan loppuun
     else if (k.tyyppi === T.PALA) {
       const av = huone + '|' + o.id; let t = tiedostot.get(av);
@@ -898,6 +911,10 @@
   if (!VW.__djValikkoRivi) { VW.__djValikkoRivi = true;
     (VW.kuplaValikkoJono = VW.kuplaValikkoJono || []).push({ kohde: 'hahmo', lisaosa: 'Datajako',
       nimi: ctx => VW.__djValikkoApi.nimi(ctx), nakyy: ctx => VW.__djValikkoApi.nakyy(ctx), tee: ctx => VW.__djValikkoApi.tee(ctx) }); }
+  VW.kuplaDatajakoPeli = { versio: VERSIO, omaNimi,
+    laheta: e => { if (!paalla() || !e || typeof e !== 'object') return false; if (peliJono.length >= 40) peliJono.shift(); peliJono.push(e); return true; },
+    kuuntele: f => { peliKuuntelijat.add(f); return () => peliKuuntelijat.delete(f); },
+    jonossa: () => peliJono.length };
   VW.kuplaDatajako = { versio: VERSIO, tagilista, tarjousLista, palautaLahetetty, toistaTarjoukset, jaaLisaosa, poistaLisaosa, asennaLisaosa, kumoaLisaosa, ajaLisaosa, lisaosaKoodit, lisaosatPalat, ilmoitaLisaosat, lisaosaTarjoukset, lisaosatAjossa, lisaosatTarjotut, omatLisaosat, avaaYv, yvId, yvChat, yvHuone, yvAvaimet, haeTiedosto, historiaViestit, lahetetyt, tiedostot, lasnaLista, ilmoitaChat, vastaaKutsuihin, kutsut, ilmoitetut, pyydaHistoria, tarjoukset, tilasto, osoita, kohdeKlikista, kohdeGeometria, ase, viestit, lista, liity, uusiHuoneId, lahetaTeksti, lahetaTiedosto, lahetaToiminto, lahetaTiedostoUudelleen, omaNimi, poistaJaettu, poistaOmasta, poistuHuoneesta, tyhjennaHuone, nimeaHuone, pakkaaKuva, ajaToiminto, kuvaus, puhdasAsu, kuuntelijat, tallennaAse, tallennaMerkinta, komennot: { rekisteroi: rekisteroiKomento, poista: n => komennot.delete(komentoNimi(n)), lista: () => [...komennot.keys()] }, ajaKomento, jasenna, vieAsetukset, tuoAsetukset, siivoaTuonti, siivoaMerkinta, jono, CHUNK, GAP, RAJA, lue, yksikot };
 
   // ---------- ajastin (Worker: piilotettu välilehti ei kuristu) ----------
