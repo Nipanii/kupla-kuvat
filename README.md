@@ -35,3 +35,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/kirppari-myynti-jalkeen-1013.png` — Kirpparin myynti-ikkuna korjauksen esikatselu (korkeus sisällön mukaan)
 - `kuvat/kohtelu-kp-robo.jpg` — robo: miten kurkkupomo kohtelee robota (13.10.)
 - `kuvat/kultainen-cola-luonnos.png` — Kultainen cola-kone, luonnos (Ezkeyn idea)
+- `kuvat/matto-syvyys-050-vertailu.png` — matto-syvyys 0.5.0 ruohokorjaus A/B huone 424
