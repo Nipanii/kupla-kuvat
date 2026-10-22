@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.1.12
+// @version      0.1.13
 // @description  Testilisäosa (B84): pintakävelyn kursori ja klikkaus vain ruutuihin joille palvelin sallii kävelyn tai istumisen. Pullo, minibaari ja pöytä eivät enää saa sinistä ruutua; sohva ja tuoli pysäyttävät säteen.
 // @kupla-oletus off
 // @author       re-lab
@@ -71,7 +71,7 @@
         for (let o = 0; o + 6 <= b.length;) {
           const len = dv.getInt32(o), hdr = dv.getInt16(o + 4);
           if (len < 2 || o + 4 + len > b.length) break;
-          if (hdr === 1778 || hdr === 1534 || hdr === 3776) { const body = b.subarray(o + 6, o + 4 + len); setTimeout(() => kasittele(body), 300); }
+          if (hdr === 1778 || hdr === 1534 || hdr === 3776) { const body = b.subarray(o + 6, o + 4 + len); kasittele(body.slice()); }   // 0.1.13: ei 300 ms viivettä; paivita() liittää korkeudet kun esine on olemassa
           o += 4 + len;
         }
       } catch (err) { tila.virhe = String(err); }
@@ -82,6 +82,11 @@
 
   // --- 2. säde ja kursori (RoomObjectEventHandler, sama logiikka kuin haarassa) ----------------
   const BLOCKED = 40, STEP_UP = 1.1, RAY_STEP = 0.02;
+  // 0.1.13 (kp 22.10. 16:55 "tyhmä kovakoodattu raja-arvo"): ei 0.01-toleranssia. Palvelin kirjoittaa ruudun pinokorkeuden
+  //   (short)(z * 256.0) (Daybreak HeightMapMessageComposer:28) ja client lukee sen (h & 16383) / 256 (RoomHeightMapParser
+  //   .decodeTileHeight), eli ruudun korkeus = pinon yläpinta katkaistuna 1/256:aan (tuoli 0.2 -> 51/256 = 0.199, mitattu).
+  //   Esineen z ja korkeus tulevat tarkkoina (Double.toString), joten sama katkaisu tekee vertailusta tarkan.
+  const ruutuK = v => { const s = (Math.trunc(v * 256) << 16) >> 16; return s < 0 ? -1 : (s & 16383) / 256; };
   function paikkaa() {
     const r = RE(), h = r && (r.objectEventHandler || r._roomObjectEventHandler);
     if (!h || h.__kkKav || typeof h.getRaisedSurfaceLocation !== 'function') return;
@@ -94,9 +99,12 @@
     // kp 15:30). Mutta ruudun korkeus (pinokartta) on palvelimen max(z + korkeus). Siis: ruutu on auki vain jos jonkin
     // KÄVELTÄVÄN esineen yläpinta osuu ruudun korkeuteen; muuten korkein on ei-käveltävä. Matto pöydällä -> matto = ruudun
     // korkeus -> auki. TV maton päällä / lamppu ruohossa -> ei osu -> kiinni. Tuolit (pinoamaton ruutu, korkeus 0): ylin esine.
-    let pino = null, pinoT = 0;
+    // 0.1.13: ei 300 ms välimuistia. Yksi rakennus palvelee yhden synkronisen kierroksen (hiiritapahtuma ja sen tulvatäyttö)
+    //   ja pudotetaan seuraavassa mikrotaskissa, joten siirretty tai uusi esine ei koskaan näy vanhana.
+    let pino = null;
     const pinoKartta = (rid) => {
-      const nyt = Date.now(); if (pino && pino.rid === rid && nyt - pinoT < 300) return pino.m;
+      if (pino && pino.rid === rid) return pino.m;
+      paivita();
       const m = new Map();   // ruutu -> { pinnat: [[z, yläpinta]] käveltäville/istuttaville, tuntematon }
       for (const o of r.getRoomObjects(rid, LATTIA) || []) {
         if (!o || !o.model) continue; const v = o.model.getValue(AVAIN); if (v !== 0 && v !== 1) continue;
@@ -110,7 +118,7 @@
           m.set(k, e);
         }
       }
-      pino = { rid, m }; pinoT = nyt; return m;
+      const tama = pino = { rid, m }; queueMicrotask(() => { if (pino === tama) pino = null; }); return m;
     };
     // 0.1.9 MERKIN KORKEUS (Res 22.10. 16:06 "sininen indicator pitäs mennä koko stackin päälle", kp 16:02 "piirtää sen aika alas
     //   penkkii / pyllyn korkeudelle"). Natiivi getActiveSurfaceLocation piirtää istuimen merkin sizeZ - 0.5:een (rahi tyynyn
@@ -125,17 +133,17 @@
       // 0.1.10 kp 16:22 "siirrä se ruutu takas mis se oli penkis … se korkeus ei ollu ongelma, vaa et se ei näkyny penkis
       //   ollenkaa": istuimen korkeus = natiivin istumakorkeus z + max(0, sizeZ - 0.5) (RoomObjectEventHandler sitOffset).
       let paras = null;
-      for (const [z, yla, sz] of e.pinnat) if (Math.abs(z - th) < 0.01 && yla - th > 0.01 && (paras === null || yla > paras[1])) paras = [z, yla, sz];
+      for (const [z, yla, sz] of e.pinnat) if (ruutuK(z) === th && ruutuK(yla) > th && (paras === null || yla > paras[1])) paras = [z, yla, sz];
       if (paras) istuin = paras[0] + Math.max(0, paras[2] - 0.5);
       if (istuin !== null) return istuin;
-      return e.pinnat.some(([, yla]) => Math.abs(yla - th) < 0.01) ? th : null;
+      return e.pinnat.some(([, yla]) => ruutuK(yla) === th) ? th : null;
     };
     tila.merkki = merkki;
     h.getTopFurnitureWalkable = function (rid, x, y) {
       const o = ylin(rid, x, y); if (!o || !o.model) return null;
       const hm = this._roomEngine.getFurnitureStackingHeightMap(rid), e = pinoKartta(rid).get(x + ',' + y);
       // Istuin (tuoli/sohva) antaa ruudun korkeudeksi oman z:nsa, ei yläpintaa (kp 15:36: 33 tuoliruutua maton päällä kiinni).
-      if (e && !e.tuntematon && hm && !hm.isStackingBlocked(x, y)) { const th = hm.getTileHeight(x, y); return e.pinnat.some(([z, yla]) => Math.abs(yla - th) < 0.01 || Math.abs(z - th) < 0.01); }
+      if (e && !e.tuntematon && hm && !hm.isStackingBlocked(x, y)) { const th = hm.getTileHeight(x, y); return e.pinnat.some(([z, yla]) => ruutuK(yla) === th || ruutuK(z) === th); }
       const v = o.model.getValue(AVAIN); return (v === 0 || v === 1) ? v === 1 : null;
     };
     // Natiivi polku (getActiveSurfaceLocation) luottaa furnidataan: res_eskone on siellä canstandon=true, palvelin "" ->
