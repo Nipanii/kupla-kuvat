@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.1.11
+// @version      0.1.12
 // @description  Testilisäosa (B84): pintakävelyn kursori ja klikkaus vain ruutuihin joille palvelin sallii kävelyn tai istumisen. Pullo, minibaari ja pöytä eivät enää saa sinistä ruutua; sohva ja tuoli pysäyttävät säteen.
 // @kupla-oletus off
 // @author       re-lab
@@ -190,35 +190,7 @@
       return null;   // mihinkään säteen kohtaan ei pääse: ei kursoria eikä kävelyä
     };
   }
-  // 0.1.11 SININEN = LATTIASTA, EI ESINEESTÄ (kp 22.10. 16:25-16:29 "matto lattialla = lattiataso … sininen ruutu on esineille
-  //   jotka ei oo lattiatasolla mut on accessible … jos matto on ilmassa siihen kuuluu sininen neliö … älä tee purkkaa", "joo").
-  //   Peli valitsee korkeusmerkin (sininen) itse: TileCursorLogic.processUpdateMessage "height > .8 ? CURSOR_HEIGHT_STATE"
-  //   (live-bundle, baseline-koodia). Mutta height on merkin POHJASTA, ja pohja on hiiren alla oleva esine -> pöydällä oleva
-  //   matto (pohja = matto, height 0) ei saanut sinistä. Tässä pelin oma logiikka saa saman viestin height = pinta - lattia
-  //   (huoneen pohjakorkeus, getLegacyWallGeometry().getHeight), eli raja on pelin eikä tämän lisäosan. Merkin PAIKKA ei muutu:
-  //   piirtokorkeus (tile_cursor_height, TileCursorVisualization kerros 1) palautetaan alkuperäiseksi heti perään.
-  const KURSORI_K = 'tile_cursor_height';
-  function kursoriTila() {
-    const re = RE(); if (!re || typeof re.getRoomObjectCursor !== 'function') return;
-    const c = re.getRoomObjectCursor(re.activeRoomId), L = c && c.logic, P = L && Object.getPrototypeOf(L);
-    if (!P || P.__kkLattia || typeof P.processUpdateMessage !== 'function') return;
-    const orig = P.processUpdateMessage; P.__kkLattia = true; tila.kursori = 'paikattu';
-    P.processUpdateMessage = function (m) {
-      let m2 = m;
-      try {
-        if (m && m.visible && typeof m.height === 'number' && m.location && typeof m.constructor === 'function') {
-          const r2 = RE(), lw = r2 && r2.getLegacyWallGeometry(r2.activeRoomId), l = m.location;
-          if (lw) {
-            const lattia = lw.getHeight(Math.round(l.x), Math.round(l.y)) || 0, h = l.z + m.height - lattia;
-            if (Math.abs(h - m.height) > 1e-6) m2 = new m.constructor(l, h, m.visible, m.sourceEventId, m.toggleVisibility);
-          }
-        }
-      } catch (e) { tila.virhe = String(e); m2 = m; }
-      const tulos = orig.call(this, m2);
-      if (m2 !== m) try { if (this.object && this.object.model) this.object.model.setValue(KURSORI_K, m.height); } catch (e) { tila.virhe = String(e); }
-      return tulos;
-    };
-  }
-  setInterval(() => { try { kursoriTila(); } catch (e) { tila.virhe = String(e); } }, 1000);
+  // 🗑 0.1.12: 0.1.11:n kursoritila lattiasta (pelin TileCursorLogic-raja 0.8) POISTETTU, kp 22.10. 16:40 "se et sitä on käytetty
+  //   fixed korkeudel oli purkkaa" + 16:55 "tyhmä kovakoodattu raja-arvo". Kursorin tilaan ei kosketa.
   setInterval(paikkaa, 1000);
 })();
