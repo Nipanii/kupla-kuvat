@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.1.13
+// @version      0.1.14
 // @description  Testilisäosa (B84): pintakävelyn kursori ja klikkaus vain ruutuihin joille palvelin sallii kävelyn tai istumisen. Pullo, minibaari ja pöytä eivät enää saa sinistä ruutua; sohva ja tuoli pysäyttävät säteen.
 // @kupla-oletus off
 // @author       re-lab
@@ -152,7 +152,11 @@
     if (typeof aktiivinenOrig === 'function') h.getActiveSurfaceLocation = function (ro, event) {
       if (ro && ro.model && ro.model.getValue(AVAIN) === 0) return null;
       const p = aktiivinenOrig.call(this, ro, event); if (!p) return p;
-      const T = merkki(this._roomEngine.activeRoomId, p.x, p.y); if (T !== null) p.z = Math.max(0, T - ro.getLocation().z);
+      const rid = this._roomEngine.activeRoomId;
+      // 0.1.14 (Res 22.10. 17:17 "vieläkin sininen merkki unreachable paikoissa"): natiivi polku ei katsonut saavutettavuutta
+      //   lainkaan. Ruutu johon ei pääse -> null, jolloin säde jatkaa taakse (getRaisedSurfaceLocation tarkistaa saman).
+      const reach = this.getReachableSurfaceTiles(rid); if (reach && !this.isTileReachable(rid, reach, p.x, p.y)) return null;
+      const T = merkki(rid, p.x, p.y); if (T !== null) p.z = Math.max(0, T - ro.getLocation().z);
       return p;
     };
     const avoinOrig = h.isSurfaceTileOpen;
