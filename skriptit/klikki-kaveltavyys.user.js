@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.1.14
+// @version      0.1.15
 // @description  Testilisäosa (B84): pintakävelyn kursori ja klikkaus vain ruutuihin joille palvelin sallii kävelyn tai istumisen. Pullo, minibaari ja pöytä eivät enää saa sinistä ruutua; sohva ja tuoli pysäyttävät säteen.
 // @kupla-oletus off
 // @author       re-lab
@@ -204,5 +204,33 @@
   }
   // 🗑 0.1.12: 0.1.11:n kursoritila lattiasta (pelin TileCursorLogic-raja 0.8) POISTETTU, kp 22.10. 16:40 "se et sitä on käytetty
   //   fixed korkeudel oli purkkaa" + 16:55 "tyhmä kovakoodattu raja-arvo". Kursorin tilaan ei kosketa.
+  // 0.1.15 SININEN = SEISOMAKORKEUS EI OLE LATTIA (Res 22.10. 17:44 "sininen pitäis näkyä aina kun hoveraa jotain muuta paitsi
+  //   lattiaa", 17:44:50 "ei" = lattialla oleva matto ei; kp 16:25 "matto lattialla = lattiataso"; Res 17:44:39 "ja se on reachable").
+  //   Ei rajaa: kursorin seisomakorkeus (sijainti z + korkeus) katkaistaan palvelimen 1/256-ruudukkoon (ruutuK, sama kuin
+  //   pinokartta) ja verrataan huoneen lattiaan (getLegacyWallGeometry().getHeight, kokonaisluku). Eri -> korkeusmerkki (6),
+  //   sama -> tavallinen (0). Lattiamatto rug2 on palvelimelta 0.000001 -> ruudukossa 0 = lattia. Saavutettavuus on jo
+  //   kursorin syntyehto (0.1.14). Pelin oma raja (height > 0.8) ei enää päätä: tila asetetaan aina kun kursori näkyy.
+  function kursoriTaso() {
+    const re = RE(); if (!re || typeof re.getRoomObjectCursor !== 'function') return;
+    const c = re.getRoomObjectCursor(re.activeRoomId), L = c && c.logic, P = L && Object.getPrototypeOf(L);
+    if (!P || P.__kkTaso || typeof P.processUpdateMessage !== 'function') return;
+    const orig = P.processUpdateMessage; P.__kkTaso = true; tila.kursori = 'taso';
+    P.processUpdateMessage = function (m) {
+      const tulos = orig.apply(this, arguments);
+      try {
+        const o = this.object;
+        if (o && m && m.visible && typeof m.height === 'number' && m.location && typeof o.setState === 'function') {
+          const r2 = RE(), lw = r2 && r2.getLegacyWallGeometry(r2.activeRoomId), l = m.location;
+          if (lw) {
+            const lattia = lw.getHeight(Math.round(l.x), Math.round(l.y)), seisoo = ruutuK(l.z + m.height);
+            const haluttu = seisoo !== lattia ? 6 : 0;
+            if (o.getState(0) !== haluttu) o.setState(haluttu, 0);
+          }
+        }
+      } catch (e) { tila.virhe = String(e); }
+      return tulos;
+    };
+  }
   setInterval(paikkaa, 1000);
+  setInterval(() => { try { kursoriTaso(); } catch (e) { tila.virhe = String(e); } }, 1000);
 })();
