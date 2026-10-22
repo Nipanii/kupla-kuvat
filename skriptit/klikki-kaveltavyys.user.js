@@ -4,7 +4,10 @@
 // @match        https://kupla.cc/*
 // @run-at       document-idle
 // @grant        none
-// @version      0.1.15
+// @version      0.1.17
+// @updateURL    https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikki-kaveltavyys.user.js
+// @downloadURL  https://raw.githubusercontent.com/Nipanii/kupla-kuvat/main/skriptit/klikki-kaveltavyys.user.js
+// @homepageURL  https://github.com/Nipanii/kupla-kuvat
 // @description  Testilisäosa (B84): pintakävelyn kursori ja klikkaus vain ruutuihin joille palvelin sallii kävelyn tai istumisen. Pullo, minibaari ja pöytä eivät enää saa sinistä ruutua; sohva ja tuoli pysäyttävät säteen.
 // @kupla-oletus off
 // @author       re-lab
@@ -210,27 +213,8 @@
   //   pinokartta) ja verrataan huoneen lattiaan (getLegacyWallGeometry().getHeight, kokonaisluku). Eri -> korkeusmerkki (6),
   //   sama -> tavallinen (0). Lattiamatto rug2 on palvelimelta 0.000001 -> ruudukossa 0 = lattia. Saavutettavuus on jo
   //   kursorin syntyehto (0.1.14). Pelin oma raja (height > 0.8) ei enää päätä: tila asetetaan aina kun kursori näkyy.
-  function kursoriTaso() {
-    const re = RE(); if (!re || typeof re.getRoomObjectCursor !== 'function') return;
-    const c = re.getRoomObjectCursor(re.activeRoomId), L = c && c.logic, P = L && Object.getPrototypeOf(L);
-    if (!P || P.__kkTaso || typeof P.processUpdateMessage !== 'function') return;
-    const orig = P.processUpdateMessage; P.__kkTaso = true; tila.kursori = 'taso';
-    P.processUpdateMessage = function (m) {
-      const tulos = orig.apply(this, arguments);
-      try {
-        const o = this.object;
-        if (o && m && m.visible && typeof m.height === 'number' && m.location && typeof o.setState === 'function') {
-          const r2 = RE(), lw = r2 && r2.getLegacyWallGeometry(r2.activeRoomId), l = m.location;
-          if (lw) {
-            const lattia = lw.getHeight(Math.round(l.x), Math.round(l.y)), seisoo = ruutuK(l.z + m.height);
-            const haluttu = seisoo !== lattia ? 6 : 0;
-            if (o.getState(0) !== haluttu) o.setState(haluttu, 0);
-          }
-        }
-      } catch (e) { tila.virhe = String(e); }
-      return tulos;
-    };
-  }
+  // 🗑 0.1.16: kursoriTaso POISTETTU. Res 22.10. 18:49 valitsi alkuperäisen Habbo-säännön: Habbo-Sky TileCursorLogic.as:67
+  //   näyttää korkeusmerkin kun height > 0.8 (pinta esineen pohjasta / pino miinus lattia). Se on pelin oma sääntö, joten
+  //   plugin ei enää koske kursorin tilaan. (0.1.15:n vertailu lattiaan antoi sinisen 0.2-matolle ja 4.6-lattialle.)
   setInterval(paikkaa, 1000);
-  setInterval(() => { try { kursoriTaso(); } catch (e) { tila.virhe = String(e); } }, 1000);
 })();
