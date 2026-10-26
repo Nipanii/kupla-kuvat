@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Huone-efektit (miinarata ym.)
-// @version      0.4.5
+// @version      0.4.7
 // @match        https://kupla.cc/*
 // @grant        none
 // ==/UserScript==
@@ -12,9 +12,9 @@
   const LISTA = 'https://nipanii.github.io/kupla-kuvat/huoneskriptit/efektit.json';
   // 0.3.2: oikea ajastin on _ajastin, koska vanha 0.2.x pysäyttää window.miina.ajastin -kentän ajastimen latautuessaan.
   if (window.miina) { clearInterval(window.miina.ajastin); clearInterval(window.miina._ajastin); clearInterval(window.miina._paivitys); }
-  const cfg = window.miina = { versio: '0.4.5', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
+  const cfg = window.miina = { versio: '0.4.7', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
   let seuraavaId = -930001;
-  const edellinen = new Map(), viimeksi = new Map();
+  const edellinen = new Map(), viimeksi = new Map(), paikka = new Map();
   let huone = null, saannot = [], haetaan = false;
 
   const data = (st) => ({ flags: 0, uniqueNumber: 0, uniqueSeries: 0, rarityLevel: -1, state: 0,
@@ -57,9 +57,10 @@
     if (loc) { const ed = edellinen.get(oid); edellinen.set(oid, { x: loc.x, y: loc.y, t: tgt ? [Math.round(tgt.x), Math.round(tgt.y)] : null });
       if (ed && Math.hypot(loc.x - ed.x, loc.y - ed.y) > 1.5 && Date.now() - (viimeksi.get(oid) || 0) > 1500)
         cfg.loki.push({ u: oid, ohi: true, mista: [Math.round(ed.x), Math.round(ed.y)], kohde: ed.t, nyt: [Math.round(loc.x), Math.round(loc.y)] }); }
+    paikka.set(oid, { loc, tgt });
     for (const [P, tulossa] of [[tgt, true], [loc, false]]) {
       if (!P) continue; const x = Math.round(P.x), y = Math.round(P.y), k = x + ',' + y;
-      const s = saannot.find(s => s.ruudut && s.ruudut.has(k)); if (!s) continue;
+      const s = saannot.find(s => !s.efekti && s.ruudut && s.ruudut.has(k)); if (!s) continue;
       // 0.4.5: teleportin natiiviviiveen aikana hahmo ehtii astua 2-3 miinaruutuun (kp loki 8,18 -> 8,17 -> 8,16) -> yksi räjähdys per hahmo per cfg.vali
       const nyt = Date.now(); if (nyt - (viimeksi.get(oid) || 0) < cfg.vali) return;
       viimeksi.set(oid + '@' + k, nyt); viimeksi.set(oid, nyt);
@@ -67,6 +68,28 @@
       cfg.loki.push({ u: oid, x, y, tapa: tulossa ? 'kohde' : 'sijainti', viive });
       setTimeout(() => cfg.rajayta(x, y, P.z, s.furni, s.kesto), viive);
       return;
+    }
+  };
+  // 0.4.6: säännöllä "efekti": N laukaisu on PALVELIMEN oma hetki: wired antaa hahmolle efektin N (teleport = 4) kun se rekisteröi astumisen,
+  //   ja hahmon kohderuutu on silloin miinaruutu (mitattu robo 12,19 -> 12,18, teleportti ~1,5 s myöhemmin). kp 23:58 "teleport efekti tulee
+  //   ennen teleporttia, siitä voisit tunnistaa". Ei arvausta sijainnista -> ei hukkia, ei tuplia natiiviviiveen aikana.
+  // 0.4.7: efekti tulee JUURI ENNEN samassa nipussa olevaa liikepäivitystä (kohde = miinaruutu) -> arvioi vasta sen jälkeen.
+  //   0.4.6 itsetesti: 8/8 teleporttia, 0 räjähdystä, koska paikka oli askeleen jäljessä (loc 10,20 tgt 10,19, miina 10,18).
+  cfg.__efekti = (rid, oid, fx) => { setTimeout(() => cfg.__efektiNyt(rid, oid, fx), 60); };
+  cfg.__efektiNyt = (rid, oid, fx) => {
+    if (rid !== huone || haetaan || !saannot.length) return;
+    const p = paikka.get(oid) || {};
+    for (const s of saannot) {
+      if (s.efekti !== fx || !s.ruudut) continue;
+      for (const [P, tulossa] of [[p.tgt, true], [p.loc, false]]) {
+        if (!P) continue; const x = Math.round(P.x), y = Math.round(P.y); if (!s.ruudut.has(x + ',' + y)) continue;
+        const nyt = Date.now(); if (nyt - (viimeksi.get(oid) || 0) < cfg.vali) return; viimeksi.set(oid, nyt);
+        const viive = tulossa && p.loc && (Math.round(p.loc.x) !== x || Math.round(p.loc.y) !== y) ? 500 : 0;
+        cfg.loki.push({ u: oid, x, y, tapa: 'efekti' + fx, viive });
+        setTimeout(() => cfg.rajayta(x, y, P.z, s.furni, s.kesto), viive);
+        return;
+      }
+      cfg.loki.push({ u: oid, efekti: fx, ohi: true, loc: p.loc && [Math.round(p.loc.x), Math.round(p.loc.y)], tgt: p.tgt && [Math.round(p.tgt.x), Math.round(p.tgt.y)] });
     }
   };
   cfg._ajastin = setInterval(() => {
@@ -89,6 +112,8 @@
     }
     // 0.4.0: tunnistus suoraan jokaisesta sijaintipäivityksestä (kp 23:47 "tyhmä tunnistus"): 50 ms kysely ei nähnyt miinaruutua,
     //   kun palvelin lähetti askeleen miinalle ja teleportin samassa nipussa (loki: hyppy 10,16 -> 11,23 ilman miinaa).
+    if (!e.__miinaEfektiKoukku) { const orig = e.updateRoomObjectUserEffect; e.__miinaEfektiKoukku = true;
+      e.updateRoomObjectUserEffect = function (rid, oid, fx) { try { const k = window.miina && window.miina.__efekti; if (k) k(rid, oid, fx); } catch (x) {} return orig.apply(this, arguments); }; }
     if (!e.__miinaKoukku) { const orig = e.updateRoomObjectUserLocation; e.__miinaKoukku = true;
       e.updateRoomObjectUserLocation = function (rid, oid, loc, tgt) { try { const k = window.miina && window.miina.__liike; if (k) k(rid, oid, loc, tgt, arguments[10]); } catch (x) {} return orig.apply(this, arguments); }; }
   }, 50);
