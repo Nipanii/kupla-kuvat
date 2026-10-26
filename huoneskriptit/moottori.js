@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Huone-efektit (miinarata ym.)
-// @version      0.4.0
+// @version      0.4.1
 // @match        https://kupla.cc/*
 // @grant        none
 // ==/UserScript==
@@ -12,7 +12,7 @@
   const LISTA = 'https://nipanii.github.io/kupla-kuvat/huoneskriptit/efektit.json';
   // 0.3.2: oikea ajastin on _ajastin, koska vanha 0.2.x pysäyttää window.miina.ajastin -kentän ajastimen latautuessaan.
   if (window.miina) { clearInterval(window.miina.ajastin); clearInterval(window.miina._ajastin); clearInterval(window.miina._paivitys); }
-  const cfg = window.miina = { versio: '0.4.0', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
+  const cfg = window.miina = { versio: '0.4.1', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
   let seuraavaId = -930001;
   const edellinen = new Map(), viimeksi = new Map();
   let huone = null, saannot = [], haetaan = false;
@@ -91,5 +91,5 @@
     if (window.miina !== cfg) { clearInterval(cfg._paivitys); return; }
     try { const t = await (await fetch(URL + '?t=' + Date.now(), { cache: 'no-store' })).text(); const v = (t.match(/versio: '([^']*)'/) || [])[1];
       if (v && v !== cfg.versio) { clearInterval(cfg._paivitys); const L = window.huoneEfektiLataaja; if (L) L.koodi = t; (0, eval)(t); console.info('[huone-efektit] päivitetty', v); } } catch (e) {}
-  }, 60000);
+  }, 15000); // 0.4.1: 60 s + Pagesin ~1 min julkaisuviive oli kp:lle liian hidas
 })();
