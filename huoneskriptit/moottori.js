@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Huone-efektit (miinarata ym.)
-// @version      0.3.7
+// @version      0.4.0
 // @match        https://kupla.cc/*
 // @grant        none
 // ==/UserScript==
@@ -12,7 +12,7 @@
   const LISTA = 'https://nipanii.github.io/kupla-kuvat/huoneskriptit/efektit.json';
   // 0.3.2: oikea ajastin on _ajastin, koska vanha 0.2.x pysäyttää window.miina.ajastin -kentän ajastimen latautuessaan.
   if (window.miina) { clearInterval(window.miina.ajastin); clearInterval(window.miina._ajastin); clearInterval(window.miina._paivitys); }
-  const cfg = window.miina = { versio: '0.3.7', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
+  const cfg = window.miina = { versio: '0.4.0', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
   let seuraavaId = -930001;
   const edellinen = new Map(), viimeksi = new Map();
   let huone = null, saannot = [], haetaan = false;
@@ -50,6 +50,20 @@
     haetaan = false;
   };
 
+  // 0.4.0: kutsutaan updateRoomObjectUserLocation-koukusta (asennetaan kerran, delegoi tähän -> päivitys korvaa logiikan).
+  cfg.__liike = (rid, oid, loc, tgt, kesto) => {
+    if (rid !== huone || haetaan || !saannot.length) return;
+    for (const [P, tulossa] of [[tgt, true], [loc, false]]) {
+      if (!P) continue; const x = Math.round(P.x), y = Math.round(P.y), k = x + ',' + y;
+      const s = saannot.find(s => s.ruudut && s.ruudut.has(k)); if (!s) continue;
+      const nyt = Date.now(); if (nyt - (viimeksi.get(oid + '@' + k) || 0) < cfg.vali) return;
+      viimeksi.set(oid + '@' + k, nyt);
+      const viive = tulossa && loc && (Math.round(loc.x) !== x || Math.round(loc.y) !== y) ? (kesto > 0 ? kesto : 500) : 0;
+      cfg.loki.push({ u: oid, x, y, tapa: tulossa ? 'kohde' : 'sijainti', viive });
+      setTimeout(() => cfg.rajayta(x, y, P.z, s.furni, s.kesto), viive);
+      return;
+    }
+  };
   cfg._ajastin = setInterval(() => {
     // 0.3.2: vanha prototyyppi (0.2.x, ei versiota) käynnistyy lataajan jälkeen ja pysäyttää tämän -> otetaan valta takaisin.
     if (window.miina !== cfg) { const v = window.miina; if (!v) { clearInterval(cfg._ajastin); return; } // kumoa poisti -> pysähdy
@@ -64,36 +78,10 @@
       for (const id of s.furnit || []) { const L = e.getRoomObject(r, id, 10)?.getLocation(); if (L) set.add(Math.round(L.x) + ',' + Math.round(L.y)); }
       if (set.size) s.ruudut = set;
     }
-    const nyt = Date.now();
-    for (const u of e.getRoomObjects(r, 100)) {
-      const g = u.logic, P = u.getLocation(); if (!g || !P) continue;
-      const d = g._locationDelta, liikkuu = d && d.length > 0;
-      const T = liikkuu ? [Math.round(g._location.x + d.x), Math.round(g._location.y + d.y)] : [Math.round(P.x), Math.round(P.y)];
-      const ed = edellinen.get(u.id);
-      edellinen.set(u.id, { T, d: liikkuu ? [Math.sign(d.x), Math.sign(d.y)] : (ed ? ed.d : [0, 0]), P: [P.x, P.y], z: P.z });
-      if (!ed) continue;
-      // Ehdokasruudut: askeleen kohde (kävely miinalle ilman teleporttia) ja, jos hahmo HYPPÄSI (teleport-wired),
-      // viimeinen kohde + yksi askel samaan suuntaan — palvelin on askeleen edellä, joten miinaruutuun ei koskaan tule siirtoa.
-      const ehd = [];
-      const hyppy = Math.hypot(P.x - ed.P[0], P.y - ed.P[1]) > 0.75; // 0.3.3: kävely liikkuu ~0.1 ruutua/50 ms, joten lyhytkin teleport (alle 1,5) on hyppy
-      // 0.3.7: askel-tunnistus ehti jo -> sen miinan teleport-hyppy ei saa räjäyttää toista miinaa (kp: 2 räjähdystä samasta)
-      if (hyppy && nyt - (viimeksi.get(u.id) || 0) < 1500) { /* jo räjäytetty */ }
-      else if (hyppy) { ehd.push(ed.T, [ed.T[0] + ed.d[0], ed.T[1] + ed.d[1]]);
-        // 0.3.6: reitti saattoi kääntyä viimeisellä askeleella -> myös ed.T:n naapurimiinat (vain jos tasan yksi, ettei arvata)
-        const naap = []; for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) { if (!dx && !dy) continue; const q = [ed.T[0] + dx, ed.T[1] + dy]; if (saannot.some(s => s.ruudut && s.ruudut.has(q[0] + ',' + q[1]))) naap.push(q); }
-        if (naap.length === 1) ehd.push(naap[0]); }
-      else if (T[0] !== ed.T[0] || T[1] !== ed.T[1]) ehd.push(T);
-      for (const [x, y] of ehd) {
-        const k = x + ',' + y, s = saannot.find(s => s.ruudut && s.ruudut.has(k)); if (!s) continue;
-        if (nyt - (viimeksi.get(u.id + '@' + k) || 0) < cfg.vali) break; // 0.3.3: tauko per ruutu, toinen miina räjähtää heti
-        viimeksi.set(u.id + '@' + k, nyt); viimeksi.set(u.id, nyt);
-        const viive = hyppy ? 0 : Math.max(0, (g._updateInterval || 0) - ((g._time || 0) - (g._changeTime || 0)));
-        cfg.loki.push({ u: u.id, x, y, tapa: hyppy ? 'hyppy' : 'askel' });
-        setTimeout(() => cfg.rajayta(x, y, ed.z, s.furni, s.kesto), viive);
-        break;
-      }
-      if (hyppy && ehd.length && !ehd.some(([x, y]) => saannot.some(s => s.ruudut && s.ruudut.has(x + ',' + y)))) cfg.loki.push({ u: u.id, ohi: ehd, mista: ed.T, P: [Math.round(P.x), Math.round(P.y)] }); // 0.3.6: hyppy ilman miinaa = mahdollinen hukka
-    }
+    // 0.4.0: tunnistus suoraan jokaisesta sijaintipäivityksestä (kp 23:47 "tyhmä tunnistus"): 50 ms kysely ei nähnyt miinaruutua,
+    //   kun palvelin lähetti askeleen miinalle ja teleportin samassa nipussa (loki: hyppy 10,16 -> 11,23 ilman miinaa).
+    if (!e.__miinaKoukku) { const orig = e.updateRoomObjectUserLocation; e.__miinaKoukku = true;
+      e.updateRoomObjectUserLocation = function (rid, oid, loc, tgt) { try { const k = window.miina && window.miina.__liike; if (k) k(rid, oid, loc, tgt, arguments[10]); } catch (x) {} return orig.apply(this, arguments); }; }
   }, 50);
 })();
 // 0.3.4: itsepäivitys 60 s välein. Lataaja (#87) hakee vain kun huone-id vaihtuu, ja saman huoneen uudelleentulo ei vaihda sitä.
