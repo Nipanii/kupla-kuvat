@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Huone-efektit (miinarata ym.)
-// @version      0.4.2
+// @version      0.4.3
 // @match        https://kupla.cc/*
 // @grant        none
 // ==/UserScript==
@@ -12,7 +12,7 @@
   const LISTA = 'https://nipanii.github.io/kupla-kuvat/huoneskriptit/efektit.json';
   // 0.3.2: oikea ajastin on _ajastin, koska vanha 0.2.x pysäyttää window.miina.ajastin -kentän ajastimen latautuessaan.
   if (window.miina) { clearInterval(window.miina.ajastin); clearInterval(window.miina._ajastin); clearInterval(window.miina._paivitys); }
-  const cfg = window.miina = { versio: '0.4.2', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
+  const cfg = window.miina = { versio: '0.4.3', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
   let seuraavaId = -930001;
   const edellinen = new Map(), viimeksi = new Map();
   let huone = null, saannot = [], haetaan = false;
@@ -79,7 +79,11 @@
     for (const s of saannot) {
       if (s.ruudut || s.laukaisu !== 'astu') continue;
       const set = new Set();
-      for (const id of s.furnit || []) { const L = e.getRoomObject(r, id, 10)?.getLocation(); if (L) set.add(Math.round(L.x) + ',' + Math.round(L.y)); }
+      // 0.4.3: furni voi olla monta ruutua (681:n nurmi 2x2) -> kaikki sen ruudut, ei vain kulmaa (kp 23:52 "joku ruutu ei laukee ikinä")
+      for (const id of s.furnit || []) { const o = e.getRoomObject(r, id, 10), L = o?.getLocation(); if (!L) continue;
+        const m = o.model, sx = Number(m?.getValue?.('furniture_size_x')) || 1, sy = Number(m?.getValue?.('furniture_size_y')) || 1;
+        const k = Math.round(o.getDirection?.()?.x || 0) % 180 === 90, w = k ? sy : sx, h = k ? sx : sy;
+        for (let dx = 0; dx < w; dx++) for (let dy = 0; dy < h; dy++) set.add((Math.round(L.x) + dx) + ',' + (Math.round(L.y) + dy)); }
       if (set.size) s.ruudut = set;
     }
     // 0.4.0: tunnistus suoraan jokaisesta sijaintipäivityksestä (kp 23:47 "tyhmä tunnistus"): 50 ms kysely ei nähnyt miinaruutua,
