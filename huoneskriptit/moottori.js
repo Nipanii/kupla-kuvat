@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Huone-efektit (miinarata ym.)
-// @version      0.3.5
+// @version      0.3.6
 // @match        https://kupla.cc/*
 // @grant        none
 // ==/UserScript==
@@ -12,7 +12,7 @@
   const LISTA = 'https://nipanii.github.io/kupla-kuvat/huoneskriptit/efektit.json';
   // 0.3.2: oikea ajastin on _ajastin, koska vanha 0.2.x pysäyttää window.miina.ajastin -kentän ajastimen latautuessaan.
   if (window.miina) { clearInterval(window.miina.ajastin); clearInterval(window.miina._ajastin); clearInterval(window.miina._paivitys); }
-  const cfg = window.miina = { versio: '0.3.5', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
+  const cfg = window.miina = { versio: '0.3.6', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
   let seuraavaId = -930001;
   const edellinen = new Map(), viimeksi = new Map();
   let huone = null, saannot = [], haetaan = false;
@@ -74,7 +74,10 @@
       // viimeinen kohde + yksi askel samaan suuntaan — palvelin on askeleen edellä, joten miinaruutuun ei koskaan tule siirtoa.
       const ehd = [];
       const hyppy = Math.hypot(P.x - ed.P[0], P.y - ed.P[1]) > 0.75; // 0.3.3: kävely liikkuu ~0.1 ruutua/50 ms, joten lyhytkin teleport (alle 1,5) on hyppy
-      if (hyppy) { ehd.push(ed.T, [ed.T[0] + ed.d[0], ed.T[1] + ed.d[1]]); }
+      if (hyppy) { ehd.push(ed.T, [ed.T[0] + ed.d[0], ed.T[1] + ed.d[1]]);
+        // 0.3.6: reitti saattoi kääntyä viimeisellä askeleella -> myös ed.T:n naapurimiinat (vain jos tasan yksi, ettei arvata)
+        const naap = []; for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) { if (!dx && !dy) continue; const q = [ed.T[0] + dx, ed.T[1] + dy]; if (saannot.some(s => s.ruudut && s.ruudut.has(q[0] + ',' + q[1]))) naap.push(q); }
+        if (naap.length === 1) ehd.push(naap[0]); }
       else if (T[0] !== ed.T[0] || T[1] !== ed.T[1]) ehd.push(T);
       for (const [x, y] of ehd) {
         const k = x + ',' + y, s = saannot.find(s => s.ruudut && s.ruudut.has(k)); if (!s) continue;
@@ -85,6 +88,7 @@
         setTimeout(() => cfg.rajayta(x, y, ed.z, s.furni, s.kesto), viive);
         break;
       }
+      if (hyppy && !ehd.some(([x, y]) => saannot.some(s => s.ruudut && s.ruudut.has(x + ',' + y)))) cfg.loki.push({ u: u.id, ohi: ehd, mista: ed.T, P: [Math.round(P.x), Math.round(P.y)] }); // 0.3.6: hyppy ilman miinaa = mahdollinen hukka
     }
   }, 50);
 })();
