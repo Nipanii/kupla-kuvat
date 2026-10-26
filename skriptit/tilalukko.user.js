@@ -4,7 +4,7 @@
 // @match        https://kupla.cc/*
 // @grant        none
 // @run-at       document-idle
-// @version      1.1.0
+// @version      1.2.0
 // @description  🔒-nappi: kun lukko on päällä, klikkaus/tuplaklikkaus EI vaihda huoneen kamojen tilaa (lattia 99, seinä 210). Oikeuksien kanssa ettei vahingossa hajota esim. wired-rataa.
 // @author       re-lab
 // ==/UserScript==
@@ -13,7 +13,7 @@
 //   adminit voi vahingos hajottaa esim sonan wired rataa".
 // Mekanismi: yhteysolion send-koukku (sama tapa kuin enable-wired). Composer-luokka -> id kartasta _messageIdByComposer;
 //   99 FURNITURE_MULTISTATE ja 210 FURNITURE_WALL_MULTISTATE (nitro/PROTOCOL.md) jätetään lähettämättä kun lukko päällä.
-// RAJA: estää KAIKKI 99/210-klikkaukset, myös teleportit/portit jotka käyttävät samaa pakettia -> avaa lukko niitä varten.
+// RAJA: estää 99/210-klikkaukset; 1.2.0 alkaen teleportit ja wiredit (luokkanimen perusteella) pääsevät läpi.
 //   Ei koske noppia, himmentimiä, yksisuuntaisia ovia eikä kamojen siirtoa/kääntöä. Vain oma client — muut eivät huomaa mitään.
 (function () {
   'use strict';
@@ -66,6 +66,16 @@
     piirra(); ilmoita(lukossa ? '🔒 kamojen tila lukittu' : '🔓 tilalukko pois'); });
   piirra(); document.body.appendChild(nappi);
 
+  // 1.2.0 (kp 2026-10-26 22:11 "korjaa et teleportterit toimii se päällä"): sama paketti 99 käyttää myös teleportti ja
+  //   wiredin avaus tuplaklikkauksella -> ne päästetään läpi. Tunnistus luokkanimestä (client ei näe palvelimen interaction-tyyppiä):
+  //   wf_* = wired, tele/teleport/portal/door = teleportti. RAJA: teleportti jonka nimessä ei ole näitä on yhä lukossa.
+  const SALLITUT = /^wf_|tele|portal|door/i;
+  function sallittu(m, id) {
+    try { const a = m.getMessageArray ? m.getMessageArray() : m._data, re = RE();
+      const o = re && a && re.getRoomObject(re.activeRoomId, a[0], id === 210 ? 20 : 10);
+      return !!(o && SALLITUT.test(o.type || '')); } catch (e) { return false; }
+  }
+
   // Koukku yhteysolioon; tarkistus 2 s välein, koska uudelleenyhdistys voi tuoda uuden olion.
   function hook(conn) {
     if (conn.__tilalukkoHooked) return;
@@ -74,7 +84,7 @@
     if (!luokat.size) return;
     const orig = conn.send;
     conn.send = function (m) {
-      if (lukossa && m && luokat.has(m.constructor)) { ilmoita('🔒 tilalukko esti tilan vaihdon'); return; }
+      if (lukossa && m && luokat.has(m.constructor) && !sallittu(m, map.get(m.constructor))) { ilmoita('🔒 tilalukko esti tilan vaihdon'); return; }
       return orig.apply(this, arguments);
     };
     conn.__tilalukkoHooked = true;
