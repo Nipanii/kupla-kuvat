@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Huone-efektit (miinarata ym.)
-// @version      0.3.3
+// @version      0.3.4
 // @match        https://kupla.cc/*
 // @grant        none
 // ==/UserScript==
@@ -11,8 +11,8 @@
 (() => {
   const LISTA = 'https://nipanii.github.io/kupla-kuvat/huoneskriptit/efektit.json';
   // 0.3.2: oikea ajastin on _ajastin, koska vanha 0.2.x pysäyttää window.miina.ajastin -kentän ajastimen latautuessaan.
-  if (window.miina) { clearInterval(window.miina.ajastin); clearInterval(window.miina._ajastin); }
-  const cfg = window.miina = { versio: '0.3.3', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
+  if (window.miina) { clearInterval(window.miina.ajastin); clearInterval(window.miina._ajastin); clearInterval(window.miina._paivitys); }
+  const cfg = window.miina = { versio: '0.3.4', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
   let seuraavaId = -930001;
   const edellinen = new Map(), viimeksi = new Map();
   let huone = null, saannot = [], haetaan = false;
@@ -85,4 +85,13 @@
       }
     }
   }, 50);
+})();
+// 0.3.4: itsepäivitys 60 s välein. Lataaja (#87) hakee vain kun huone-id vaihtuu, ja saman huoneen uudelleentulo ei vaihda sitä.
+(() => {
+  const cfg = window.miina, URL = 'https://nipanii.github.io/kupla-kuvat/huoneskriptit/moottori.js';
+  cfg._paivitys = setInterval(async () => {
+    if (window.miina !== cfg) { clearInterval(cfg._paivitys); return; }
+    try { const t = await (await fetch(URL + '?t=' + Date.now(), { cache: 'no-store' })).text(); const v = (t.match(/versio: '([^']*)'/) || [])[1];
+      if (v && v !== cfg.versio) { clearInterval(cfg._paivitys); const L = window.huoneEfektiLataaja; if (L) L.koodi = t; (0, eval)(t); console.info('[huone-efektit] päivitetty', v); } } catch (e) {}
+  }, 60000);
 })();
