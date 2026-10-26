@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Huone-efektit (miinarata ym.)
-// @version      0.3.6
+// @version      0.3.7
 // @match        https://kupla.cc/*
 // @grant        none
 // ==/UserScript==
@@ -12,7 +12,7 @@
   const LISTA = 'https://nipanii.github.io/kupla-kuvat/huoneskriptit/efektit.json';
   // 0.3.2: oikea ajastin on _ajastin, koska vanha 0.2.x pysäyttää window.miina.ajastin -kentän ajastimen latautuessaan.
   if (window.miina) { clearInterval(window.miina.ajastin); clearInterval(window.miina._ajastin); clearInterval(window.miina._paivitys); }
-  const cfg = window.miina = { versio: '0.3.6', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
+  const cfg = window.miina = { versio: '0.3.7', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
   let seuraavaId = -930001;
   const edellinen = new Map(), viimeksi = new Map();
   let huone = null, saannot = [], haetaan = false;
@@ -29,7 +29,9 @@
     if (!e.addFurnitureFloorByTypeName(r, id, furni, L, D, 0, data('0'), NaN, -1, 0, -1, '', true, false)) return false;
     const alku = performance.now();
     const piilo = cfg.piilotaPohja ? setInterval(() => { const o = e.getRoomObject(r, id, 10); if (!o) return; for (const s of o.visualization.sprites) if (/_a_\d+_\d+$/.test(s.name)) s.visible = false; }, 16) : null;
-    setTimeout(() => e.updateRoomObjectFloor(r, id, L, D, 1, data('1')), 50);
+    // 0.3.7: tila 1 (animaatio) katosi jos se tuli ennen kuin visualisointi oli valmis -> vain pohja näkyi (kp 2/5). Odotetaan spritejä.
+    let yrit = 0; const kaynnista = setInterval(() => { const o = e.getRoomObject(r, id, 10); yrit++;
+      if ((o && o.visualization && o.visualization.sprites && o.visualization.sprites.length) || yrit > 30) { clearInterval(kaynnista); e.updateRoomObjectFloor(r, id, L, D, 1, data('1')); } }, 30);
     setTimeout(() => { clearInterval(piilo); e.removeRoomObjectFloor(r, id); cfg.loki.push({ piirretty: true, x, y, ms: Math.round(performance.now() - alku) }); }, ms);
     return true;
   };
@@ -74,7 +76,9 @@
       // viimeinen kohde + yksi askel samaan suuntaan — palvelin on askeleen edellä, joten miinaruutuun ei koskaan tule siirtoa.
       const ehd = [];
       const hyppy = Math.hypot(P.x - ed.P[0], P.y - ed.P[1]) > 0.75; // 0.3.3: kävely liikkuu ~0.1 ruutua/50 ms, joten lyhytkin teleport (alle 1,5) on hyppy
-      if (hyppy) { ehd.push(ed.T, [ed.T[0] + ed.d[0], ed.T[1] + ed.d[1]]);
+      // 0.3.7: askel-tunnistus ehti jo -> sen miinan teleport-hyppy ei saa räjäyttää toista miinaa (kp: 2 räjähdystä samasta)
+      if (hyppy && nyt - (viimeksi.get(u.id) || 0) < 1500) { /* jo räjäytetty */ }
+      else if (hyppy) { ehd.push(ed.T, [ed.T[0] + ed.d[0], ed.T[1] + ed.d[1]]);
         // 0.3.6: reitti saattoi kääntyä viimeisellä askeleella -> myös ed.T:n naapurimiinat (vain jos tasan yksi, ettei arvata)
         const naap = []; for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) { if (!dx && !dy) continue; const q = [ed.T[0] + dx, ed.T[1] + dy]; if (saannot.some(s => s.ruudut && s.ruudut.has(q[0] + ',' + q[1]))) naap.push(q); }
         if (naap.length === 1) ehd.push(naap[0]); }
@@ -82,13 +86,13 @@
       for (const [x, y] of ehd) {
         const k = x + ',' + y, s = saannot.find(s => s.ruudut && s.ruudut.has(k)); if (!s) continue;
         if (nyt - (viimeksi.get(u.id + '@' + k) || 0) < cfg.vali) break; // 0.3.3: tauko per ruutu, toinen miina räjähtää heti
-        viimeksi.set(u.id + '@' + k, nyt);
+        viimeksi.set(u.id + '@' + k, nyt); viimeksi.set(u.id, nyt);
         const viive = hyppy ? 0 : Math.max(0, (g._updateInterval || 0) - ((g._time || 0) - (g._changeTime || 0)));
         cfg.loki.push({ u: u.id, x, y, tapa: hyppy ? 'hyppy' : 'askel' });
         setTimeout(() => cfg.rajayta(x, y, ed.z, s.furni, s.kesto), viive);
         break;
       }
-      if (hyppy && !ehd.some(([x, y]) => saannot.some(s => s.ruudut && s.ruudut.has(x + ',' + y)))) cfg.loki.push({ u: u.id, ohi: ehd, mista: ed.T, P: [Math.round(P.x), Math.round(P.y)] }); // 0.3.6: hyppy ilman miinaa = mahdollinen hukka
+      if (hyppy && ehd.length && !ehd.some(([x, y]) => saannot.some(s => s.ruudut && s.ruudut.has(x + ',' + y)))) cfg.loki.push({ u: u.id, ohi: ehd, mista: ed.T, P: [Math.round(P.x), Math.round(P.y)] }); // 0.3.6: hyppy ilman miinaa = mahdollinen hukka
     }
   }, 50);
 })();
