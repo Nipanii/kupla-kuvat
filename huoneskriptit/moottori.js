@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Huone-efektit (miinarata ym.)
-// @version      0.4.4
+// @version      0.4.5
 // @match        https://kupla.cc/*
 // @grant        none
 // ==/UserScript==
@@ -12,7 +12,7 @@
   const LISTA = 'https://nipanii.github.io/kupla-kuvat/huoneskriptit/efektit.json';
   // 0.3.2: oikea ajastin on _ajastin, koska vanha 0.2.x pysäyttää window.miina.ajastin -kentän ajastimen latautuessaan.
   if (window.miina) { clearInterval(window.miina.ajastin); clearInterval(window.miina._ajastin); clearInterval(window.miina._paivitys); }
-  const cfg = window.miina = { versio: '0.4.4', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
+  const cfg = window.miina = { versio: '0.4.5', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
   let seuraavaId = -930001;
   const edellinen = new Map(), viimeksi = new Map();
   let huone = null, saannot = [], haetaan = false;
@@ -60,7 +60,8 @@
     for (const [P, tulossa] of [[tgt, true], [loc, false]]) {
       if (!P) continue; const x = Math.round(P.x), y = Math.round(P.y), k = x + ',' + y;
       const s = saannot.find(s => s.ruudut && s.ruudut.has(k)); if (!s) continue;
-      const nyt = Date.now(); if (nyt - (viimeksi.get(oid + '@' + k) || 0) < cfg.vali) return;
+      // 0.4.5: teleportin natiiviviiveen aikana hahmo ehtii astua 2-3 miinaruutuun (kp loki 8,18 -> 8,17 -> 8,16) -> yksi räjähdys per hahmo per cfg.vali
+      const nyt = Date.now(); if (nyt - (viimeksi.get(oid) || 0) < cfg.vali) return;
       viimeksi.set(oid + '@' + k, nyt); viimeksi.set(oid, nyt);
       const viive = tulossa && loc && (Math.round(loc.x) !== x || Math.round(loc.y) !== y) ? (kesto > 0 ? kesto : 500) : 0;
       cfg.loki.push({ u: oid, x, y, tapa: tulossa ? 'kohde' : 'sijainti', viive });
