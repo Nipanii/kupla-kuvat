@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Huone-efektit (miinarata ym.)
-// @version      0.4.1
+// @version      0.4.2
 // @match        https://kupla.cc/*
 // @grant        none
 // ==/UserScript==
@@ -12,7 +12,7 @@
   const LISTA = 'https://nipanii.github.io/kupla-kuvat/huoneskriptit/efektit.json';
   // 0.3.2: oikea ajastin on _ajastin, koska vanha 0.2.x pysäyttää window.miina.ajastin -kentän ajastimen latautuessaan.
   if (window.miina) { clearInterval(window.miina.ajastin); clearInterval(window.miina._ajastin); clearInterval(window.miina._paivitys); }
-  const cfg = window.miina = { versio: '0.4.1', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
+  const cfg = window.miina = { versio: '0.4.2', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
   let seuraavaId = -930001;
   const edellinen = new Map(), viimeksi = new Map();
   let huone = null, saannot = [], haetaan = false;
@@ -53,11 +53,15 @@
   // 0.4.0: kutsutaan updateRoomObjectUserLocation-koukusta (asennetaan kerran, delegoi tähän -> päivitys korvaa logiikan).
   cfg.__liike = (rid, oid, loc, tgt, kesto) => {
     if (rid !== huone || haetaan || !saannot.length) return;
+    // 0.4.2: teleport-hyppy ilman räjähdystä 1,5 s sisällä = hukka -> lokiin (mista = edellinen sijainti/kohde), jotta hukka näkyy datana
+    if (loc) { const ed = edellinen.get(oid); edellinen.set(oid, { x: loc.x, y: loc.y, t: tgt ? [Math.round(tgt.x), Math.round(tgt.y)] : null });
+      if (ed && Math.hypot(loc.x - ed.x, loc.y - ed.y) > 1.5 && Date.now() - (viimeksi.get(oid) || 0) > 1500)
+        cfg.loki.push({ u: oid, ohi: true, mista: [Math.round(ed.x), Math.round(ed.y)], kohde: ed.t, nyt: [Math.round(loc.x), Math.round(loc.y)] }); }
     for (const [P, tulossa] of [[tgt, true], [loc, false]]) {
       if (!P) continue; const x = Math.round(P.x), y = Math.round(P.y), k = x + ',' + y;
       const s = saannot.find(s => s.ruudut && s.ruudut.has(k)); if (!s) continue;
       const nyt = Date.now(); if (nyt - (viimeksi.get(oid + '@' + k) || 0) < cfg.vali) return;
-      viimeksi.set(oid + '@' + k, nyt);
+      viimeksi.set(oid + '@' + k, nyt); viimeksi.set(oid, nyt);
       const viive = tulossa && loc && (Math.round(loc.x) !== x || Math.round(loc.y) !== y) ? (kesto > 0 ? kesto : 500) : 0;
       cfg.loki.push({ u: oid, x, y, tapa: tulossa ? 'kohde' : 'sijainti', viive });
       setTimeout(() => cfg.rajayta(x, y, P.z, s.furni, s.kesto), viive);
