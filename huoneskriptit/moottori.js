@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Huone-efektit (miinarata ym.)
-// @version      0.3.1
+// @version      0.3.2
 // @match        https://kupla.cc/*
 // @grant        none
 // ==/UserScript==
@@ -10,8 +10,9 @@
 // PROTOTYYPPIVAIHE: miina.kesto = 1200 konsolissa ohittaa listan keston testausta varten (poistetaan lopullisesta).
 (() => {
   const LISTA = 'https://nipanii.github.io/kupla-kuvat/huoneskriptit/efektit.json';
-  if (window.miina && window.miina.ajastin) clearInterval(window.miina.ajastin);
-  const cfg = window.miina = { versio: '0.3.1', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
+  // 0.3.2: oikea ajastin on _ajastin, koska vanha 0.2.x pysäyttää window.miina.ajastin -kentän ajastimen latautuessaan.
+  if (window.miina) { clearInterval(window.miina.ajastin); clearInterval(window.miina._ajastin); }
+  const cfg = window.miina = { versio: '0.3.2', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
   let seuraavaId = -930001;
   const edellinen = new Map(), viimeksi = new Map();
   let huone = null, saannot = [], haetaan = false;
@@ -45,7 +46,10 @@
     haetaan = false;
   };
 
-  cfg.ajastin = setInterval(() => {
+  cfg._ajastin = setInterval(() => {
+    // 0.3.2: vanha prototyyppi (0.2.x, ei versiota) käynnistyy lataajan jälkeen ja pysäyttää tämän -> otetaan valta takaisin.
+    if (window.miina !== cfg) { const v = window.miina; if (!v) { clearInterval(cfg._ajastin); return; } // kumoa poisti -> pysähdy
+      if (!v.versio) { if (v.ajastin) clearInterval(v.ajastin); window.miina = cfg; } }
     const e = window.NitroDevTools && window.NitroDevTools.roomEngine; if (!e) return;
     const r = e.activeRoomId;
     if (r !== huone) { huone = r; saannot = []; edellinen.clear(); if (r > 0) lataa(r); return; }
