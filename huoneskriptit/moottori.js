@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Huone-efektit (miinarata ym.)
-// @version      0.3.2
+// @version      0.3.3
 // @match        https://kupla.cc/*
 // @grant        none
 // ==/UserScript==
@@ -12,7 +12,7 @@
   const LISTA = 'https://nipanii.github.io/kupla-kuvat/huoneskriptit/efektit.json';
   // 0.3.2: oikea ajastin on _ajastin, koska vanha 0.2.x pysäyttää window.miina.ajastin -kentän ajastimen latautuessaan.
   if (window.miina) { clearInterval(window.miina.ajastin); clearInterval(window.miina._ajastin); }
-  const cfg = window.miina = { versio: '0.3.2', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
+  const cfg = window.miina = { versio: '0.3.3', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
   let seuraavaId = -930001;
   const edellinen = new Map(), viimeksi = new Map();
   let huone = null, saannot = [], haetaan = false;
@@ -71,13 +71,13 @@
       // Ehdokasruudut: askeleen kohde (kävely miinalle ilman teleporttia) ja, jos hahmo HYPPÄSI (teleport-wired),
       // viimeinen kohde + yksi askel samaan suuntaan — palvelin on askeleen edellä, joten miinaruutuun ei koskaan tule siirtoa.
       const ehd = [];
-      const hyppy = Math.hypot(P.x - ed.P[0], P.y - ed.P[1]) > 1.5;
+      const hyppy = Math.hypot(P.x - ed.P[0], P.y - ed.P[1]) > 0.75; // 0.3.3: kävely liikkuu ~0.1 ruutua/50 ms, joten lyhytkin teleport (alle 1,5) on hyppy
       if (hyppy) { ehd.push(ed.T, [ed.T[0] + ed.d[0], ed.T[1] + ed.d[1]]); }
       else if (T[0] !== ed.T[0] || T[1] !== ed.T[1]) ehd.push(T);
       for (const [x, y] of ehd) {
         const k = x + ',' + y, s = saannot.find(s => s.ruudut && s.ruudut.has(k)); if (!s) continue;
-        if (nyt - (viimeksi.get(u.id) || 0) < cfg.vali) break;
-        viimeksi.set(u.id, nyt);
+        if (nyt - (viimeksi.get(u.id + '@' + k) || 0) < cfg.vali) break; // 0.3.3: tauko per ruutu, toinen miina räjähtää heti
+        viimeksi.set(u.id + '@' + k, nyt);
         const viive = hyppy ? 0 : Math.max(0, (g._updateInterval || 0) - ((g._time || 0) - (g._changeTime || 0)));
         cfg.loki.push({ u: u.id, x, y, tapa: hyppy ? 'hyppy' : 'askel' });
         setTimeout(() => cfg.rajayta(x, y, ed.z, s.furni, s.kesto), viive);
