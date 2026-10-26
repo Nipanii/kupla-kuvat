@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Huone-efektit (miinarata ym.)
-// @version      0.3.4
+// @version      0.3.5
 // @match        https://kupla.cc/*
 // @grant        none
 // ==/UserScript==
@@ -12,7 +12,7 @@
   const LISTA = 'https://nipanii.github.io/kupla-kuvat/huoneskriptit/efektit.json';
   // 0.3.2: oikea ajastin on _ajastin, koska vanha 0.2.x pysäyttää window.miina.ajastin -kentän ajastimen latautuessaan.
   if (window.miina) { clearInterval(window.miina.ajastin); clearInterval(window.miina._ajastin); clearInterval(window.miina._paivitys); }
-  const cfg = window.miina = { versio: '0.3.4', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
+  const cfg = window.miina = { versio: '0.3.5', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
   let seuraavaId = -930001;
   const edellinen = new Map(), viimeksi = new Map();
   let huone = null, saannot = [], haetaan = false;
@@ -42,6 +42,8 @@
       cfg.lista = j;
       saannot = ((j.huoneet || {})[String(r)] || {}).efektit || [];
       saannot.forEach(s => { s.ruudut = null; });
+      // 0.3.5: ensimmäinen räjähdys jäi näkymättä, koska efektin grafiikka latautuu vasta ensikäytössä -> esilataus kartan ulkopuolelle.
+      for (const f of new Set(saannot.map(s => s.furni || 'fx_explosion'))) setTimeout(() => cfg.rajayta(-60, -60, 0, f, 3000), 500);
     } catch (err) { console.warn('[huone-efektit] listan haku epäonnistui', err); saannot = []; }
     haetaan = false;
   };
