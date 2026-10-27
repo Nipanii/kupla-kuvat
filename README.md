@@ -41,3 +41,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/messenger-b123-0-nyt.png` — Messenger-asettelu B123: 0-nyt
 - `kuvat/messenger-b123-A.png` — Messenger-asettelu B123: A
 - `kuvat/messenger-b123-A2.png` — Messenger-asettelu B123: A2
+- `kuvat/messenger-b123-B.png` — Messenger-asettelu B123: B
