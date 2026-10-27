@@ -44,3 +44,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/messenger-b123-B.png` — Messenger-asettelu B123: B
 - `kuvat/b123-vertailu.png` — Messenger omat viestit: nyt, A, A2, B
 - `kuvat/badget-halloween-miina.png` — Halloween/miina-badge-ehdokkaat nimineen (272)
+- `kuvat/brobot-yo-656.mp4` — robon eka biisi, yö huoneessa 656 (Gemini)
