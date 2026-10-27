@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Huone-efektit (miinarata ym.)
-// @version      0.4.8
+// @version      0.4.9
 // @match        https://kupla.cc/*
 // @grant        none
 // ==/UserScript==
@@ -12,7 +12,7 @@
   const LISTA = 'https://nipanii.github.io/kupla-kuvat/huoneskriptit/efektit.json';
   // 0.3.2: oikea ajastin on _ajastin, koska vanha 0.2.x pysäyttää window.miina.ajastin -kentän ajastimen latautuessaan.
   if (window.miina) { clearInterval(window.miina.ajastin); clearInterval(window.miina._ajastin); clearInterval(window.miina._paivitys); }
-  const cfg = window.miina = { versio: '0.4.8', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
+  const cfg = window.miina = { versio: '0.4.9', lennata: true, kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
   let seuraavaId = -930001;
   const edellinen = new Map(), viimeksi = new Map(), paikka = new Map();
   let huone = null, saannot = [], haetaan = false;
@@ -36,6 +36,25 @@
     return true;
   };
 
+  // 0.4.9 (kp 27.10. 12:16 "lisää scriptiin testinä"): hahmo lentää räjähdyksessä ilmaan pyörien. Vain omassa clientissä:
+  //   paikallinen kopio hahmosta (negatiivinen id) miinaruutuun, oikea hahmo piiloon jos se on vielä ruudulla. Pois: miina.lennata = false
+  let haamuId = -940001;
+  cfg.lenna = (oid, x, y, z) => {
+    const e = window.NitroDevTools && window.NitroDevTools.roomEngine; if (!cfg.lennata || !e || oid == null || oid < 0) return false;
+    const r = e.activeRoomId, o = e.getRoomObject(r, oid, 100); if (!o) return false;
+    const V = o.getLocation().constructor, fig = o.model.getValue('figure'); if (!fig) return false;
+    const g = haamuId--, z0 = z || 0, alku = performance.now(), ms = 1100, h = 3.5;
+    if (!e.addRoomObjectUser(r, g, new V(x, y, z0), new V(90), 90, 1, fig)) return false;
+    const piilotetut = new Set(), lahella = () => { const l = o.getLocation(); return Math.hypot(l.x - x, l.y - y) < 1.1; };
+    const ajo = setInterval(() => {
+      const t = Math.min(1, (performance.now() - alku) / ms), suunta = (Math.floor(t * 16) % 8) * 45;
+      e.updateRoomObjectUserLocation(r, g, new V(x + t * 0.8, y - t * 0.8, z0 + 4 * h * t * (1 - t)), null, false, 0, new V(suunta), suunta, true, false, 30);
+      if (lahella() && o.visualization) for (const sp of o.visualization.sprites) if (sp.visible) { sp.visible = false; piilotetut.add(sp); }
+      if (t >= 1) { clearInterval(ajo); e.removeRoomObjectUser(r, g); for (const sp of piilotetut) sp.visible = true; cfg.loki.push({ lensi: oid, x, y }); }
+    }, 30);
+    return true;
+  };
+
   // Haetaan lista tuoreena joka huoneeseen tullessa, jotta uudet huoneet tulevat mukaan ilman skriptin päivitystä.
   const lataa = async (r) => {
     haetaan = true;
@@ -52,7 +71,7 @@
 
   // 0.4.0: kutsutaan updateRoomObjectUserLocation-koukusta (asennetaan kerran, delegoi tähän -> päivitys korvaa logiikan).
   cfg.__liike = (rid, oid, loc, tgt, kesto) => {
-    if (rid !== huone || haetaan || !saannot.length) return;
+    if (rid !== huone || haetaan || !saannot.length || oid < 0) return;
     // 0.4.2: teleport-hyppy ilman räjähdystä 1,5 s sisällä = hukka -> lokiin (mista = edellinen sijainti/kohde), jotta hukka näkyy datana
     if (loc) { const ed = edellinen.get(oid); edellinen.set(oid, { x: loc.x, y: loc.y, z: loc.z, t: tgt ? [Math.round(tgt.x), Math.round(tgt.y)] : null });
       if (ed && Math.hypot(loc.x - ed.x, loc.y - ed.y) > 1.5 && Date.now() - (viimeksi.get(oid) || 0) > 1500) {
@@ -62,7 +81,7 @@
         let osui = false;
         for (const [x, y] of ehd) { const s = saannot.find(s => s.ruudut && s.ruudut.has(x + ',' + y)); if (!s) continue;
           viimeksi.set(oid, Date.now()); cfg.loki.push({ u: oid, x, y, tapa: 'hyppy', viive: 0 });
-          cfg.rajayta(x, y, ed.z || 0, s.furni, s.kesto); osui = true; break; }
+          cfg.rajayta(x, y, ed.z || 0, s.furni, s.kesto); cfg.lenna(oid, x, y, ed.z || 0); osui = true; break; }
         if (!osui) cfg.loki.push({ u: oid, ohi: true, mista: [Math.round(ed.x), Math.round(ed.y)], kohde: ed.t, nyt: [Math.round(loc.x), Math.round(loc.y)] }); } }
     paikka.set(oid, { loc, tgt });
     for (const [P, tulossa] of [[tgt, true], [loc, false]]) {
@@ -73,7 +92,7 @@
       viimeksi.set(oid + '@' + k, nyt); viimeksi.set(oid, nyt);
       const viive = tulossa && loc && (Math.round(loc.x) !== x || Math.round(loc.y) !== y) ? (kesto > 0 ? kesto : 500) : 0;
       cfg.loki.push({ u: oid, x, y, tapa: tulossa ? 'kohde' : 'sijainti', viive });
-      setTimeout(() => cfg.rajayta(x, y, P.z, s.furni, s.kesto), viive);
+      setTimeout(() => { cfg.rajayta(x, y, P.z, s.furni, s.kesto); cfg.lenna(oid, x, y, P.z); }, viive);
       return;
     }
   };
@@ -93,7 +112,7 @@
         const nyt = Date.now(); if (nyt - (viimeksi.get(oid) || 0) < cfg.vali) return; viimeksi.set(oid, nyt);
         const viive = tulossa && p.loc && (Math.round(p.loc.x) !== x || Math.round(p.loc.y) !== y) ? 500 : 0;
         cfg.loki.push({ u: oid, x, y, tapa: 'efekti' + fx, viive });
-        setTimeout(() => cfg.rajayta(x, y, P.z, s.furni, s.kesto), viive);
+        setTimeout(() => { cfg.rajayta(x, y, P.z, s.furni, s.kesto); cfg.lenna(oid, x, y, P.z); }, viive);
         return;
       }
       cfg.loki.push({ u: oid, efekti: fx, ohi: true, loc: p.loc && [Math.round(p.loc.x), Math.round(p.loc.y)], tgt: p.tgt && [Math.round(p.tgt.x), Math.round(p.tgt.y)] });
