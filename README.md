@@ -38,3 +38,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/matto-syvyys-050-vertailu.png` — matto-syvyys 0.5.0 ruohokorjaus A/B huone 424
 - `kuvat/generaattori-esikatselu-2210.jpg` — Wired-generaattorin tyyliesikatselu (ikonit, vähemmän tekstiä)
 - `kuvat/generaattori-pr-2210.jpg` — Wired-generaattori PR: oikea build robon clientissä
+- `kuvat/messenger-b123-0-nyt.png` — Messenger-asettelu B123: 0-nyt
