@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Huone-efektit (miinarata ym.)
-// @version      0.4.7
+// @version      0.4.8
 // @match        https://kupla.cc/*
 // @grant        none
 // ==/UserScript==
@@ -12,7 +12,7 @@
   const LISTA = 'https://nipanii.github.io/kupla-kuvat/huoneskriptit/efektit.json';
   // 0.3.2: oikea ajastin on _ajastin, koska vanha 0.2.x pysäyttää window.miina.ajastin -kentän ajastimen latautuessaan.
   if (window.miina) { clearInterval(window.miina.ajastin); clearInterval(window.miina._ajastin); clearInterval(window.miina._paivitys); }
-  const cfg = window.miina = { versio: '0.4.7', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
+  const cfg = window.miina = { versio: '0.4.8', kesto: null, vali: 1500, piilotaPohja: true, loki: [], lista: null };
   let seuraavaId = -930001;
   const edellinen = new Map(), viimeksi = new Map(), paikka = new Map();
   let huone = null, saannot = [], haetaan = false;
@@ -54,9 +54,16 @@
   cfg.__liike = (rid, oid, loc, tgt, kesto) => {
     if (rid !== huone || haetaan || !saannot.length) return;
     // 0.4.2: teleport-hyppy ilman räjähdystä 1,5 s sisällä = hukka -> lokiin (mista = edellinen sijainti/kohde), jotta hukka näkyy datana
-    if (loc) { const ed = edellinen.get(oid); edellinen.set(oid, { x: loc.x, y: loc.y, t: tgt ? [Math.round(tgt.x), Math.round(tgt.y)] : null });
-      if (ed && Math.hypot(loc.x - ed.x, loc.y - ed.y) > 1.5 && Date.now() - (viimeksi.get(oid) || 0) > 1500)
-        cfg.loki.push({ u: oid, ohi: true, mista: [Math.round(ed.x), Math.round(ed.y)], kohde: ed.t, nyt: [Math.round(loc.x), Math.round(loc.y)] }); }
+    if (loc) { const ed = edellinen.get(oid); edellinen.set(oid, { x: loc.x, y: loc.y, z: loc.z, t: tgt ? [Math.round(tgt.x), Math.round(tgt.y)] : null });
+      if (ed && Math.hypot(loc.x - ed.x, loc.y - ed.y) > 1.5 && Date.now() - (viimeksi.get(oid) || 0) > 1500) {
+        // 0.4.8: nopea tele (Res 27.10. 12:09 "ei tuu jos vaihtaa wirediin nopean telen koska se näyttää eri efektin") ei anna efektiä 4,
+        //   joten hyppy SUORAAN miinaruudusta (sijainti tai kohde) räjäyttää sen ruudun. Mitattu kp:n lokista: 5,15 ja 12,18 -> alku, 0 räjähdystä.
+        const ehd = [[Math.round(ed.x), Math.round(ed.y)], ed.t].filter(Boolean);
+        let osui = false;
+        for (const [x, y] of ehd) { const s = saannot.find(s => s.ruudut && s.ruudut.has(x + ',' + y)); if (!s) continue;
+          viimeksi.set(oid, Date.now()); cfg.loki.push({ u: oid, x, y, tapa: 'hyppy', viive: 0 });
+          cfg.rajayta(x, y, ed.z || 0, s.furni, s.kesto); osui = true; break; }
+        if (!osui) cfg.loki.push({ u: oid, ohi: true, mista: [Math.round(ed.x), Math.round(ed.y)], kohde: ed.t, nyt: [Math.round(loc.x), Math.round(loc.y)] }); } }
     paikka.set(oid, { loc, tgt });
     for (const [P, tulossa] of [[tgt, true], [loc, false]]) {
       if (!P) continue; const x = Math.round(P.x), y = Math.round(P.y), k = x + ',' + y;
