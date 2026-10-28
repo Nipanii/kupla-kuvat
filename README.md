@@ -47,3 +47,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/brobot-yo-656.mp4` — robon eka biisi, yö huoneessa 656 (Gemini)
 - `kuvat/b94-lisaosanappi-vaihtoehdot.png` — B94 lisäosakortin +/− nappi: 1 nyt, 2 teksti napissa, 3 [+] napiksi
 - `kuvat/messenger-kopioi-fix.png` — Kopioi omissa viesteissä: lyhyt viesti -> nappi vasemmalla, pitkä -> yläkulmassa (kaikki näytetty pakolla)
+- `kuvat/messenger-toiminnot-1.png` — Vaihtoehto 1 ikonipilleri: Vastaa Kopioi rivihoverilla + lainausnauha
