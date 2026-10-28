@@ -50,3 +50,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/messenger-toiminnot-1.png` — Vaihtoehto 1 ikonipilleri: Vastaa Kopioi rivihoverilla + lainausnauha
 - `kuvat/messenger-alas-1.png` — Messenger alas-nappi + 14px scrollbar robolla
 - `kuvat/messenger-kuplat-03.png` — kuplat 6px kulma + pienempi V
+- `kuvat/messenger-kuplat-04.png` — scrollbar ilman harmaata rataa
