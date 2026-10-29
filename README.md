@@ -52,3 +52,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/messenger-kuplat-03.png` — kuplat 6px kulma + pienempi V
 - `kuvat/messenger-kuplat-04.png` — scrollbar ilman harmaata rataa
 - `kuvat/messenger-valinta-1.png` — Messenger mega-PR valinta 1
+- `kuvat/messenger-valinta-4.png` — Messenger mega-PR valinta 4
