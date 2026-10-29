@@ -54,3 +54,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/messenger-valinta-1.png` — Messenger mega-PR valinta 1
 - `kuvat/messenger-valinta-4.png` — Messenger mega-PR valinta 4
 - `kuvat/messenger-valinta-6.png` — Messenger mega-PR valinta 6
+- `kuvat/messenger-valinta-9.png` — Messenger mega-PR valinta 9
