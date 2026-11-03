@@ -57,3 +57,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/messenger-valinta-9.png` — Messenger mega-PR valinta 9
 - `kuvat/furni-chooser-pr-pr-furni.png` — PR furni/chooser: pr-furni
 - `kuvat/furni-chooser-pr-pr-chooser.png` — PR furni/chooser: pr-chooser
+- `kuvat/furni-chooser-pr-pr-hohto.png` — PR furni/chooser: pr-hohto
