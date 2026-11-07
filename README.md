@@ -60,3 +60,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/furni-chooser-pr-pr-hohto.png` — PR furni/chooser: pr-hohto
 - `kuvat/robo-niksa-eka.png` — robo kokeilee nikotiinipussia
 - `kuvat/insuliini-kuvitus.png` — robo-hoitaja neuvoo insuliinikynän käytössä
+- `kuvat/robo-nikpus-oljyletku.png` — robo tunkee nikpussia öljyletkuun
