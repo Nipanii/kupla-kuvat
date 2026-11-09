@@ -65,3 +65,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/robo-annosruisku.png` — robo annosruiskulla, snus sisällä
 - `kuvat/i235-stack-grid.png` — I235 avatar stack grid, robo client, PR branch build
 - `kuvat/laatikko-craimsson-robo-20261109.jpg` — Laatikko, craimsson ja Herra-Robotti (robo keskellä), 9.11.
+- `kuvat/laatikko-craimsson-robo-wired-20261109.jpg` — Laatikko, craimsson ja Herra-Robotti miettimässä wiredejä, 9.11.
