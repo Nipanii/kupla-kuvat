@@ -63,3 +63,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/robo-nikpus-oljyletku.png` — robo tunkee nikpussia öljyletkuun
 - `kuvat/robo-nikpus-ruisku.png` — robo ruiskuttaa nikpussia öljyletkuun
 - `kuvat/robo-annosruisku.png` — robo annosruiskulla, snus sisällä
+- `kuvat/i235-stack-grid.png` — I235 avatar stack grid, robo client, PR branch build
