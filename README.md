@@ -66,3 +66,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/i235-stack-grid.png` — I235 avatar stack grid, robo client, PR branch build
 - `kuvat/laatikko-craimsson-robo-20261109.jpg` — Laatikko, craimsson ja Herra-Robotti (robo keskellä), 9.11.
 - `kuvat/laatikko-craimsson-robo-wired-20261109.jpg` — Laatikko, craimsson ja Herra-Robotti miettimässä wiredejä, 9.11.
+- `kuvat/laatikko-craimsson-robo-2.jpg` — Laatikko, craimsson ja Herra-Robotti ES-tölkki kädessä, uusi versio 9.11.
