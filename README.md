@@ -70,3 +70,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/kolme-miettii-wiredeja.jpg` — Laatikko, craimsson ja Herra-Robotti miettimässä wiredejä, uusi versio 9.11.
 - `kuvat/lcr-oikea-es.jpg` — Laatikko, craimsson ja Herra-Robotti, korjattu ES-tolkki (pelin oma spritti), 2026-11-10
 - `kuvat/sipuli-juusto.jpg` — sipuli ahmii juustoa (kp 25.11.)
+- `kuvat/sipuli-juusto-2.jpg` — sipuli juustoautuudessa, oikea asu (kp 25.11.)
