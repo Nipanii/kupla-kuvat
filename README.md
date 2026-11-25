@@ -71,3 +71,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/lcr-oikea-es.jpg` — Laatikko, craimsson ja Herra-Robotti, korjattu ES-tolkki (pelin oma spritti), 2026-11-10
 - `kuvat/sipuli-juusto.jpg` — sipuli ahmii juustoa (kp 25.11.)
 - `kuvat/sipuli-juusto-2.jpg` — sipuli juustoautuudessa, oikea asu (kp 25.11.)
+- `kuvat/furni-demo.png` — furni grid demo, sohvat
