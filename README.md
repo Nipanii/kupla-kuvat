@@ -74,3 +74,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/furni-demo.png` — furni grid demo, sohvat
 - `kuvat/kakat.png` — kaikki kakkaesineet
 - `kuvat/noitapoyta.png` — Noidan pöytä
+- `kuvat/nako-ruudukko-demo.png` — nakohaku --ruudukko demo
