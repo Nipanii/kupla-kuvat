@@ -73,3 +73,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/sipuli-juusto-2.jpg` — sipuli juustoautuudessa, oikea asu (kp 25.11.)
 - `kuvat/furni-demo.png` — furni grid demo, sohvat
 - `kuvat/kakat.png` — kaikki kakkaesineet
+- `kuvat/noitapoyta.png` — Noidan pöytä
