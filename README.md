@@ -75,3 +75,4 @@ Linkit muotoa `https://nipanii.github.io/kupla-kuvat/kuvat/<tiedosto>`.
 - `kuvat/kakat.png` — kaikki kakkaesineet
 - `kuvat/noitapoyta.png` — Noidan pöytä
 - `kuvat/nako-ruudukko-demo.png` — nakohaku --ruudukko demo
+- `kuvat/gw-1795827526867.jpg` — sona silittää kissanpentua
